@@ -164,6 +164,7 @@ function createWindow() {
     show: !SHOT,
     backgroundColor: '#05060a',
     title: 'Marquee',
+    icon: path.join(ROOT, 'build', 'icon.png'),
     titleBarStyle: 'hidden',
     titleBarOverlay: { color: '#00000000', symbolColor: '#f2f4f8', height: 44 },
     webPreferences: { preload: path.join(ROOT, 'preload.js'), contextIsolation: true, sandbox: true, backgroundThrottling: !SHOT },
@@ -214,6 +215,10 @@ function createWindow() {
     });
   }
 }
+
+// Match the AUMID on the installer's shortcuts (build.appId), so Windows shows the Marquee icon
+// on the taskbar and groups the window with its pinned shortcut.
+if (process.platform === 'win32') app.setAppUserModelId('com.camjewell.marquee');
 
 app.whenReady().then(() => {
   protocol.handle('app', (req) => {
