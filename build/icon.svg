@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <radialGradient id="bg" cx="30%" cy="20%" r="95%">
+      <stop offset="0" stop-color="#2a3352"/>
+      <stop offset="0.55" stop-color="#121521"/>
+      <stop offset="1" stop-color="#07080d"/>
+    </radialGradient>
+    <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0" stop-color="#9fb4ea" stop-opacity="0.45"/>
+      <stop offset="1" stop-color="#9fb4ea" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="bulb" cx="40%" cy="35%" r="65%">
+      <stop offset="0" stop-color="#fff8e6"/>
+      <stop offset="0.6" stop-color="#f4d38a"/>
+      <stop offset="1" stop-color="#c9963f"/>
+    </radialGradient>
+    <linearGradient id="play" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#b9c8f0"/>
+    </linearGradient>
+  </defs>
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="url(#bg)"/>
+  <rect x="16.5" y="16.5" width="479" height="479" rx="111.5" fill="none" stroke="#ffffff" stroke-opacity="0.14"/>
+  <ellipse cx="256" cy="256" rx="190" ry="150" fill="url(#glow)"/>
+  <rect x="88" y="88" width="336" height="336" rx="56" fill="#ffffff" fill-opacity="0.06" stroke="#ffffff" stroke-opacity="0.18" stroke-width="3"/>
+  <circle cx="128.0" cy="120" r="11" fill="url(#bulb)"/><circle cx="128.0" cy="392" r="11" fill="url(#bulb)"/><circle cx="170.7" cy="120" r="11" fill="url(#bulb)"/><circle cx="170.7" cy="392" r="11" fill="url(#bulb)"/><circle cx="213.3" cy="120" r="11" fill="url(#bulb)"/><circle cx="213.3" cy="392" r="11" fill="url(#bulb)"/><circle cx="256.0" cy="120" r="11" fill="url(#bulb)"/><circle cx="256.0" cy="392" r="11" fill="url(#bulb)"/><circle cx="298.7" cy="120" r="11" fill="url(#bulb)"/><circle cx="298.7" cy="392" r="11" fill="url(#bulb)"/><circle cx="341.3" cy="120" r="11" fill="url(#bulb)"/><circle cx="341.3" cy="392" r="11" fill="url(#bulb)"/><circle cx="384.0" cy="120" r="11" fill="url(#bulb)"/><circle cx="384.0" cy="392" r="11" fill="url(#bulb)"/>
+  <path d="M222 190 L330 256 L222 322 Z" fill="url(#play)" stroke="url(#play)" stroke-width="22" stroke-linejoin="round"/>
+</svg>

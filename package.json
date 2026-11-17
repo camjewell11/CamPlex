@@ -1,0 +1,47 @@
+{
+  "name": "marquee",
+  "version": "0.1.0",
+  "description": "A glass-and-blur desktop client for a personal Plex server.",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "vendor": "node scripts/vendor.mjs",
+    "prestart": "npm run vendor",
+    "start": "electron .",
+    "dev": "npm run vendor && electron . --dev",
+    "icon": "electron scripts/make-icon.cjs",
+    "dist": "npm run vendor && electron-builder --win nsis",
+    "dist:dir": "npm run vendor && electron-builder --win dir"
+  },
+  "devDependencies": {
+    "@fontsource-variable/bricolage-grotesque": "^5.3.0",
+    "dashjs": "^5.3.0",
+    "electron": "^45.3.3",
+    "electron-builder": "^26.18.0"
+  },
+  "author": "Cameron",
+  "build": {
+    "appId": "com.camjewell.marquee",
+    "productName": "Marquee",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "package.json",
+      "renderer/**/*"
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
+  }
+}

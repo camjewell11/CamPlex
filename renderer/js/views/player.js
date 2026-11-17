@@ -1,0 +1,524 @@
+// Player: DASH stream from Plex, glass controls, markers, track menus, thumbnails, and up next.
+import { h, svg, clock, episodeCode, uuid } from '../util.js';
+import { state, savePrefs } from '../app.js';
+import { QUALITY } from '../plex.js';
+import { nextEpisode } from '../actions.js';
+import { setAmbient, ambientOf } from '../ambient.js';
+import { loadBif } from '../bif.js';
+
+const TEXT_SUBS = new Set(['srt', 'subrip', 'ass', 'ssa', 'webvtt', 'vtt', 'text']);
+// The app shows a subtitle itself only when it's a separate text file that Plex can send whole.
+// Plex can't send embedded tracks on their own, so for those it draws the subtitle into the video.
+const shownByApp = (s) => !!s?.key && TEXT_SUBS.has(s.codec);
+
+export async function renderPlayer(main, { id, params }) {
+  const { plex, prefs } = state;
+  const item = await plex.metadata(id, { includeMarkers: 1, includeChapters: 1 });
+  if (!item?.Media?.length) throw new Error('This title has no playable file in Plex.');
+  setAmbient(ambientOf(item));
+  const part = item.Media[0].Part[0];
+  const streams = part.Stream || [];
+  const markers = item.Marker || [];
+  const chapters = item.Chapter || [];
+  const total = (item.duration || part.duration || 0) / 1000;
+
+  // ---------- elements ----------
+  const video = h('video', { class: 'player-video', autoplay: true, crossorigin: 'anonymous' });
+  const titleText =
+    item.type === 'episode'
+      ? [h('strong', {}, item.grandparentTitle), h('span', {}, `${episodeCode(item)} ${item.title}`)]
+      : [h('strong', {}, item.title), item.year ? h('span', {}, String(item.year)) : null];
+  const backBtn = h('button', { class: 'ctl glass', 'aria-label': 'Back', title: 'Back (Esc)', onclick: () => leave() }, svg('arrowLeft', 20));
+  const top = h('div', { class: 'p-top' }, backBtn, h('div', { class: 'p-title' }, titleText));
+
+  const playBtn = h('button', { class: 'ctl big', 'aria-label': 'Play or pause', title: 'Play or pause (Space)' }, svg('pause', 26));
+  const backTen = h('button', { class: 'ctl', 'aria-label': 'Back 10 seconds', title: 'Back 10 seconds (Left arrow)' }, svg('back10', 22));
+  const fwdTen = h('button', { class: 'ctl', 'aria-label': 'Forward 10 seconds', title: 'Forward 10 seconds (Right arrow)' }, svg('fwd10', 22));
+  const muteBtn = h('button', { class: 'ctl', 'aria-label': 'Mute', title: 'Mute (M)' }, svg('volume', 20));
+  const vol = h('input', { class: 'vol', type: 'range', min: 0, max: 1, step: 0.02, value: Number(localStorage.getItem('volume') ?? 1), 'aria-label': 'Volume' });
+  const timeEl = h('span', { class: 'time' }, `0:00 / ${clock(total)}`);
+  const tracksBtn = h('button', { class: 'ctl', 'aria-label': 'Audio, subtitles, and quality', title: 'Audio, subtitles, and quality (C)' }, svg('tracks', 20));
+  const infoBtn = h('button', { class: 'ctl', 'aria-label': 'Playback details', title: 'Playback details (I)' }, svg('info', 20));
+  const fullBtn = h('button', { class: 'ctl', 'aria-label': 'Full screen', title: 'Full screen (F)' }, svg('full', 20));
+
+  const played = h('div', { class: 's-played' });
+  const buffered = h('div', { class: 's-buffered' });
+  const knob = h('div', { class: 's-knob' });
+  const preview = h('div', { class: 's-preview glass' }, h('img', { alt: '' }), h('span'));
+  const scrub = h('div', { class: 'scrub', role: 'slider', tabindex: 0, 'aria-label': 'Seek', 'aria-valuemin': 0, 'aria-valuemax': Math.round(total) }, h('div', { class: 's-track' }, buffered, played), knob, preview);
+  for (const m of markers) {
+    if (!total) break;
+    const left = (m.startTimeOffset / 1000 / total) * 100;
+    const width = ((m.endTimeOffset - m.startTimeOffset) / 1000 / total) * 100;
+    scrub.querySelector('.s-track').append(h('span', { class: `s-marker ${m.type}`, style: { left: `${left}%`, width: `${width}%` }, title: m.type === 'intro' ? 'Intro' : 'Credits' }));
+  }
+  for (const c of chapters.slice(1)) {
+    if (total) scrub.querySelector('.s-track').append(h('span', { class: 's-chapter', style: { left: `${(c.startTimeOffset / 1000 / total) * 100}%` } }));
+  }
+
+  const bar = h(
+    'div',
+    { class: 'p-bar glass' },
+    scrub,
+    h('div', { class: 'p-buttons' }, backTen, playBtn, fwdTen, muteBtn, vol, timeEl, h('span', { class: 'spacer' }), tracksBtn, infoBtn, fullBtn),
+  );
+  const skipBtn = h('button', { class: 'skip glass', hidden: true });
+  const panel = h('div', { class: 'p-panel glass', hidden: true });
+  const stats = h('div', { class: 'p-stats glass', hidden: true });
+  const upNext = h('div', { class: 'upnext glass', hidden: true });
+  const flash = h('div', { class: 'p-flash' });
+  const message = h('div', { class: 'p-message glass', hidden: true });
+  const loading = h('div', { class: 'p-loading' }, h('span'));
+  const root = h('div', { class: 'player' }, video, loading, flash, top, skipBtn, upNext, panel, stats, message, bar);
+  main.append(root);
+
+  // ---------- stream ----------
+  let session = uuid();
+  let burn = false;
+  let dash = null;
+  let decisionText = '';
+  let subTrackEl = null;
+  const dashjs = window.dashjs;
+
+  function start(atSec) {
+    if (dash) {
+      dash.reset();
+      plex.stopTranscode(session);
+      session = uuid();
+    }
+    loading.hidden = false;
+    message.hidden = true;
+    const url = plex.manifestUrl(item.ratingKey, session, { burn, quality: prefs.quality });
+    dash = dashjs.MediaPlayer().create();
+    dash.updateSettings({
+      debug: { logLevel: dashjs.Debug.LOG_LEVEL_WARNING },
+      streaming: { buffer: { bufferTimeAtTopQuality: 30, bufferToKeep: 30 }, abr: { autoSwitchBitrate: { video: false } } },
+    });
+    dash.on(dashjs.MediaPlayer.events.ERROR, (e) => {
+      const code = e?.error?.code;
+      // dash.js puts the request URL, which carries the Plex token, into the message. Keep only the text before it.
+      const detail = String(e?.error?.message || '').split(/\s*https?:\/\//)[0].trim();
+      console.error(`dash error ${code}: ${detail}`);
+      showMessage(
+        'Plex could not stream this file.',
+        `${code ? `Player error ${code}${detail ? ` (${detail})` : ''}. ` : ''}Open the track menu and choose a lower quality to make Plex convert the video.`,
+      );
+    });
+    window.marquee.setActiveStream(plex.streamEndUrls(item, (atSec || 0) * 1000, session));
+    dash.initialize(video, atSec > 1 ? `${url}#t=${Math.floor(atSec)}` : url, true);
+    plex
+      .decision(item.ratingKey, uuid(), { burn, quality: prefs.quality })
+      .then((d) => {
+        const s = d.Metadata?.[0]?.Media?.[0]?.Part?.[0]?.Stream || [];
+        decisionText = s
+          .filter((x) => x.streamType < 3)
+          .map((x) => `${x.streamType === 1 ? 'Video' : 'Audio'}: ${x.decision === 'copy' ? 'copied' : 'converted'} as ${x.codec.toUpperCase()}${x.channels ? ` ${x.channels} ch` : ''}`)
+          .join('\n');
+      })
+      .catch(() => {});
+  }
+
+  function showMessage(title, detail) {
+    loading.hidden = true;
+    message.replaceChildren(h('h2', {}, title), h('p', {}, detail), h('button', { class: 'button glass', onclick: () => (message.hidden = true) }, 'Dismiss'));
+    message.hidden = false;
+  }
+
+  const resumeAt = params.get('resume') && item.viewOffset ? item.viewOffset / 1000 : Number(params.get('t') || 0);
+  // Restore the subtitle that Plex has selected for this file.
+  const initialSub = streams.find((s) => s.streamType === 3 && s.selected);
+  if (initialSub && !shownByApp(initialSub)) burn = true;
+  start(resumeAt);
+  if (shownByApp(initialSub)) loadTextSubtitle(initialSub).then((v) => (v ? addTextTrack(v, initialSub) : null));
+  video.volume = Number(vol.value);
+  video.muted = localStorage.getItem('muted') === '1';
+
+  // ---------- controls ----------
+  const toggle = () => (video.paused ? video.play() : video.pause());
+  const seekTo = (t) => {
+    video.currentTime = Math.max(0, Math.min(total - 1, t));
+    poke();
+  };
+  playBtn.onclick = toggle;
+  video.addEventListener('click', toggle);
+  video.addEventListener('dblclick', () => window.marquee.fullscreen());
+  backTen.onclick = () => seekTo(video.currentTime - 10);
+  fwdTen.onclick = () => seekTo(video.currentTime + 10);
+  muteBtn.onclick = () => {
+    video.muted = !video.muted;
+  };
+  vol.oninput = () => {
+    video.volume = Number(vol.value);
+    video.muted = video.volume === 0;
+    localStorage.setItem('volume', vol.value);
+  };
+  fullBtn.onclick = () => window.marquee.fullscreen();
+  const offFullscreen = window.marquee.onFullscreen((on) => fullBtn.replaceChildren(svg(on ? 'exitfull' : 'full', 20)));
+  tracksBtn.onclick = () => {
+    stats.hidden = true;
+    panel.hidden = !panel.hidden;
+    if (!panel.hidden) buildPanel();
+  };
+  infoBtn.onclick = () => {
+    panel.hidden = true;
+    stats.hidden = !stats.hidden;
+  };
+
+  video.addEventListener('play', () => {
+    playBtn.replaceChildren(svg('pause', 26));
+    report('playing');
+    pulse('play');
+  });
+  video.addEventListener('pause', () => {
+    playBtn.replaceChildren(svg('play', 26));
+    report('paused');
+    pulse('pause');
+    poke();
+  });
+  video.addEventListener('waiting', () => (loading.hidden = false));
+  video.addEventListener('playing', () => (loading.hidden = true));
+  video.addEventListener('canplay', () => (loading.hidden = true));
+  video.addEventListener('volumechange', () => {
+    muteBtn.replaceChildren(svg(video.muted || video.volume === 0 ? 'mute' : 'volume', 20));
+    localStorage.setItem('muted', video.muted ? '1' : '0');
+  });
+  video.addEventListener('timeupdate', tick);
+  video.addEventListener('ended', onEnded);
+
+  function pulse(kind) {
+    flash.replaceChildren(svg(kind, 40));
+    flash.classList.remove('go');
+    void flash.offsetWidth;
+    flash.classList.add('go');
+  }
+
+  // Scrubbing with hover thumbnails from Plex's preview index, when the server has one.
+  let bif = null;
+  if (part.indexes) loadBif(plex, part.id).then((b) => (bif = b)).catch(() => {});
+  let dragging = false;
+  const posFrom = (e) => {
+    const r = scrub.getBoundingClientRect();
+    return Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+  };
+  scrub.addEventListener('pointermove', (e) => {
+    const p = posFrom(e);
+    const t = p * total;
+    preview.style.left = `${p * 100}%`;
+    preview.querySelector('span').textContent = chapterAt(t) ? `${clock(t)}  ${chapterAt(t)}` : clock(t);
+    const img = preview.querySelector('img');
+    const src = bif?.frameAt(t);
+    img.hidden = !src;
+    if (src && img.src !== src) img.src = src;
+    preview.classList.add('show');
+    if (dragging) played.style.width = `${p * 100}%`;
+  });
+  scrub.addEventListener('pointerleave', () => preview.classList.remove('show'));
+  scrub.addEventListener('pointerdown', (e) => {
+    dragging = true;
+    scrub.setPointerCapture(e.pointerId);
+  });
+  scrub.addEventListener('pointerup', (e) => {
+    if (!dragging) return;
+    dragging = false;
+    seekTo(posFrom(e) * total);
+  });
+  scrub.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      e.stopPropagation();
+      seekTo(video.currentTime + (e.key === 'ArrowLeft' ? -10 : 10));
+    }
+  });
+  const chapterAt = (t) => chapters.find((c) => t * 1000 >= c.startTimeOffset && t * 1000 < c.endTimeOffset)?.tag || '';
+
+  // ---------- markers and up next ----------
+  let next = null;
+  let nextLoaded = false;
+  let upNextDismissed = false;
+  let countdown = null;
+  const credits = markers.find((m) => m.type === 'credits' && m.final) || markers.filter((m) => m.type === 'credits').pop();
+
+  function tick() {
+    const t = video.currentTime;
+    if (!dragging) played.style.width = `${total ? (t / total) * 100 : 0}%`;
+    knob.style.left = played.style.width;
+    timeEl.textContent = `${clock(t)} / ${clock(total)}`;
+    scrub.setAttribute('aria-valuenow', Math.round(t));
+    if (video.buffered.length) buffered.style.width = `${(video.buffered.end(video.buffered.length - 1) / total) * 100}%`;
+
+    const m = markers.find((x) => t * 1000 >= x.startTimeOffset && t * 1000 < x.endTimeOffset - 1000);
+    if (m && !(m.type === 'credits' && !upNext.hidden)) {
+      skipBtn.textContent = m.type === 'intro' ? 'Skip intro' : 'Skip credits';
+      skipBtn.onclick = () => seekTo(m.endTimeOffset / 1000);
+      skipBtn.hidden = false;
+    } else skipBtn.hidden = true;
+
+    if (item.type === 'episode' && !nextLoaded && t > total - 300) {
+      nextLoaded = true;
+      nextEpisode(item).then((n) => (next = n)).catch(() => {});
+    }
+    const creditsStart = credits ? credits.startTimeOffset / 1000 : total - 30;
+    if (next && prefs.autoplayNext && !upNextDismissed && t >= creditsStart && upNext.hidden) showUpNext();
+    if (stats.hidden === false) renderStats();
+  }
+
+  function showUpNext() {
+    let left = 15;
+    const counter = h('span', { class: 'count' }, `Plays in ${left} seconds`);
+    upNext.replaceChildren(
+      h('div', { class: 'un-thumb' }, next.thumb ? h('img', { src: plex.img(next.thumb, 400, 225), alt: '' }) : null),
+      h(
+        'div',
+        { class: 'un-text' },
+        h('span', { class: 'muted' }, 'Up next'),
+        h('strong', {}, `${episodeCode(next)} ${next.title}`),
+        counter,
+        h(
+          'div',
+          { class: 'actions' },
+          h('button', { class: 'button primary', onclick: goNext }, svg('play', 16), 'Play now'),
+          h(
+            'button',
+            {
+              class: 'button glass',
+              onclick: () => {
+                upNextDismissed = true;
+                upNext.hidden = true;
+                clearInterval(countdown);
+              },
+            },
+            'Keep watching',
+          ),
+        ),
+      ),
+    );
+    upNext.hidden = false;
+    clearInterval(countdown);
+    countdown = setInterval(() => {
+      if (video.paused) return;
+      left -= 1;
+      counter.textContent = `Plays in ${left} second${left === 1 ? '' : 's'}`;
+      if (left <= 0) goNext();
+    }, 1000);
+  }
+  function goNext() {
+    clearInterval(countdown);
+    if (next) location.replace(`#/play/${next.ratingKey}`);
+  }
+  async function onEnded() {
+    report('stopped');
+    if (item.type === 'episode' && prefs.autoplayNext) {
+      if (!next) next = await nextEpisode(item).catch(() => null);
+      if (next) return goNext();
+    }
+    leave();
+  }
+
+  // ---------- tracks panel ----------
+  function buildPanel() {
+    const audios = streams.filter((s) => s.streamType === 2);
+    const subs = streams.filter((s) => s.streamType === 3);
+    const selAudio = audios.find((s) => s.selected) || audios[0];
+    const selSub = subs.find((s) => s.selected);
+    const group = (title, opts) => h('fieldset', {}, h('legend', {}, title), opts);
+    const opt = (name, label, checked, onpick, note) =>
+      h(
+        'label',
+        { class: 'opt' },
+        h('input', { type: 'radio', name, checked, onchange: onpick }),
+        h('span', {}, label, note ? h('small', {}, note) : null),
+      );
+    panel.replaceChildren(
+      h('div', { class: 'panel-head' }, h('h2', {}, 'Playback'), h('button', { class: 'ctl', 'aria-label': 'Close', onclick: () => (panel.hidden = true) }, svg('close', 18))),
+      h(
+        'div',
+        { class: 'panel-cols' },
+        group('Audio', audios.map((a) => opt('aud', a.extendedDisplayTitle || a.displayTitle, a === selAudio, () => chooseAudio(a)))),
+        group('Subtitles', [
+          opt('sub', 'Off', !selSub, () => chooseSub(null)),
+          ...subs.map((s) => opt('sub', s.extendedDisplayTitle || s.displayTitle, s === selSub, () => chooseSub(s), shownByApp(s) ? null : 'Plex draws these into the video, so it converts the video')),
+        ]),
+        group(
+          'Quality',
+          Object.entries(QUALITY).map(([k, q]) => opt('q', q.label, prefs.quality === k, () => chooseQuality(k), k === 'original' ? 'Video copied when this app can play it' : 'Plex converts the video')),
+        ),
+      ),
+    );
+  }
+
+  async function chooseAudio(a) {
+    streams.filter((s) => s.streamType === 2).forEach((s) => (s.selected = s === a));
+    await plex.selectStreams(part.id, { audioStreamID: a.id });
+    start(video.currentTime);
+  }
+  async function chooseQuality(k) {
+    prefs.quality = k;
+    await savePrefs();
+    start(video.currentTime);
+  }
+  async function chooseSub(s) {
+    streams.filter((x) => x.streamType === 3).forEach((x) => (x.selected = x === s));
+    await plex.selectStreams(part.id, { subtitleStreamID: s ? s.id : 0 });
+    removeTextTrack();
+    const wasBurn = burn;
+    burn = false;
+    if (shownByApp(s)) {
+      const vtt = await loadTextSubtitle(s);
+      if (vtt) addTextTrack(vtt, s);
+      else burn = true;
+    } else if (s) burn = true;
+    if (burn || wasBurn) start(video.currentTime);
+    if (!panel.hidden) buildPanel();
+  }
+  async function loadTextSubtitle(s) {
+    try {
+      const r = await window.marquee.request(plex.url(s.key));
+      if (r.status < 400 && r.text) return toVtt(r.text, s.codec);
+    } catch (e) {
+      console.error(e);
+    }
+    return null;
+  }
+  function addTextTrack(vtt, s) {
+    const url = URL.createObjectURL(new Blob([vtt], { type: 'text/vtt' }));
+    subTrackEl = h('track', { kind: 'subtitles', src: url, srclang: s.languageCode || 'und', label: s.displayTitle, default: true });
+    video.append(subTrackEl);
+    subTrackEl.track.mode = 'showing';
+  }
+  function removeTextTrack() {
+    if (subTrackEl) {
+      URL.revokeObjectURL(subTrackEl.src);
+      subTrackEl.remove();
+      subTrackEl = null;
+    }
+  }
+
+  function renderStats() {
+    const q = video.getVideoPlaybackQuality?.();
+    const ahead = video.buffered.length ? video.buffered.end(video.buffered.length - 1) - video.currentTime : 0;
+    stats.replaceChildren(
+      h('h2', {}, 'Playback details'),
+      h('pre', {}, [
+        decisionText || 'Stream decision loading',
+        `Resolution: ${video.videoWidth}x${video.videoHeight}`,
+        `Buffered ahead: ${ahead.toFixed(0)} s`,
+        q ? `Dropped frames: ${q.droppedVideoFrames} of ${q.totalVideoFrames}` : '',
+        `Quality setting: ${QUALITY[prefs.quality]?.label}`,
+        burn ? 'Subtitles: burned in by Plex' : subTrackEl ? 'Subtitles: shown by this app' : 'Subtitles: off',
+      ].filter(Boolean).join('\n')),
+    );
+  }
+
+  // ---------- reporting to Plex ----------
+  function report(st) {
+    plex.timeline(item, st, video.currentTime * 1000, session);
+    window.marquee.setActiveStream(st === 'stopped' ? null : plex.streamEndUrls(item, video.currentTime * 1000, session));
+  }
+  const heartbeat = setInterval(() => !video.paused && report('playing'), 10000);
+
+  // ---------- idle hiding and keys ----------
+  let idle;
+  function poke() {
+    root.classList.remove('idle');
+    clearTimeout(idle);
+    idle = setTimeout(() => {
+      if (!video.paused && panel.hidden && stats.hidden && !root.matches(':has(.p-bar:hover)')) root.classList.add('idle');
+    }, 2800);
+  }
+  root.addEventListener('mousemove', poke);
+  poke();
+
+  function onKey(e) {
+    if (e.target.tagName === 'INPUT' && e.target.type !== 'range' && e.target.type !== 'radio') return;
+    const k = e.key.toLowerCase();
+    const handled = {
+      ' ': toggle,
+      k: toggle,
+      arrowleft: () => seekTo(video.currentTime - 10),
+      arrowright: () => seekTo(video.currentTime + 10),
+      j: () => seekTo(video.currentTime - 30),
+      l: () => seekTo(video.currentTime + 30),
+      arrowup: () => ((video.volume = Math.min(1, video.volume + 0.05)), (vol.value = video.volume)),
+      arrowdown: () => ((video.volume = Math.max(0, video.volume - 0.05)), (vol.value = video.volume)),
+      m: () => (video.muted = !video.muted),
+      f: () => window.marquee.fullscreen(),
+      c: () => tracksBtn.click(),
+      i: () => infoBtn.click(),
+      s: () => !skipBtn.hidden && skipBtn.click(),
+      n: () => next && goNext(),
+      escape: () => {
+        if (!panel.hidden || !stats.hidden) {
+          panel.hidden = true;
+          stats.hidden = true;
+        } else if (document.fullscreenElement || window.innerHeight === screen.height) window.marquee.fullscreen(false);
+        else leave();
+      },
+    }[k];
+    if (handled) {
+      e.preventDefault();
+      handled();
+      poke();
+    }
+  }
+  document.addEventListener('keydown', onKey);
+
+  function leave() {
+    if (history.length > 1) history.back();
+    else location.hash = `#/item/${item.type === 'episode' ? item.grandparentRatingKey : item.ratingKey}`;
+  }
+
+  return () => {
+    document.removeEventListener('keydown', onKey);
+    offFullscreen();
+    clearInterval(heartbeat);
+    clearInterval(countdown);
+    clearTimeout(idle);
+    report('stopped');
+    plex.stopTranscode(session);
+    dash?.reset();
+    removeTextTrack();
+    bif?.dispose();
+    window.marquee.fullscreen(false);
+  };
+}
+
+// Convert SRT or ASS text to WebVTT. ASS styling is dropped; line breaks are kept.
+function toVtt(text, codec) {
+  const t = text.replace(/^﻿/, '').replace(/\r/g, '');
+  if (/^WEBVTT/.test(t)) return t;
+  if (codec === 'ass' || codec === 'ssa' || /^\[Script Info\]/m.test(t)) return assToVtt(t);
+  return 'WEBVTT\n\n' + t.replace(/(\d+:\d+:\d+),(\d+)/g, '$1.$2');
+}
+
+function assToVtt(t) {
+  const lines = t.split('\n');
+  const formatLine = lines.find((l) => /^Format:/.test(l) && /\bStart\b/.test(l) && /\bText\b/.test(l));
+  const fields = (formatLine || 'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text')
+    .slice(7)
+    .split(',')
+    .map((f) => f.trim());
+  const iStart = fields.indexOf('Start');
+  const iEnd = fields.indexOf('End');
+  const iText = fields.indexOf('Text');
+  const stamp = (x) => {
+    const [hr, m, sec] = x.trim().split(':');
+    const [whole, frac = '0'] = sec.split('.');
+    return `${hr.padStart(2, '0')}:${m.padStart(2, '0')}:${whole.padStart(2, '0')}.${frac.padEnd(3, '0').slice(0, 3)}`;
+  };
+  const cues = [];
+  for (const l of lines) {
+    if (!l.startsWith('Dialogue:')) continue;
+    const parts = l.slice(9).split(',');
+    const text = parts
+      .slice(iText)
+      .join(',')
+      .replace(/\{[^}]*\}/g, '')
+      .replace(/\\N/gi, '\n')
+      .replace(/\\h/g, ' ')
+      .trim();
+    if (!text) continue;
+    const safe = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    cues.push([stamp(parts[iStart]), stamp(parts[iEnd]), safe]);
+  }
+  cues.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
+  return 'WEBVTT\n\n' + cues.map(([a, b, x]) => `${a} --> ${b}\n${x}`).join('\n\n') + '\n';
+}
