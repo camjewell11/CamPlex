@@ -16,7 +16,7 @@ const argValue = (name) => {
 // Developer hooks (dev tools, screenshot mode, and the token from the environment) work only when
 // the app runs from source, not in the installed build.
 const DEV = !app.isPackaged && args.includes('--dev');
-const SHOT = app.isPackaged ? null : argValue('shot'); // --shot=out.png --route=#/home --wait=6000 [--size=1600x1000] [--scroll=<selector>]
+const SHOT = app.isPackaged ? null : argValue('shot'); // --shot=out.png --route=#/home --wait=6000 [--size=1600x1000] [--click=<selector>] [--scroll=<selector>]
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true } },
@@ -192,6 +192,14 @@ function createWindow() {
         if (state) console.log(`[shot] ${state}`);
         const hero = await win.webContents.executeJavaScript("[...document.querySelectorAll('.pager .dot')].map((d) => d.getAttribute('aria-label')).join(' | ')");
         if (hero) console.log(`[shot] featured: ${hero}`);
+        // --click=<css selector> selects that element, waits, and reports where the app went.
+        const clickOn = argValue('click');
+        if (clickOn) {
+          const ok = await win.webContents.executeJavaScript(`(() => { const el = document.querySelector(${JSON.stringify(clickOn)}); if (!el) return false; el.click(); return true; })()`);
+          await new Promise((r) => setTimeout(r, 3500));
+          const where = await win.webContents.executeJavaScript('`${location.hash} (history ${history.length})`');
+          console.log(`[shot] click ${ok ? 'done' : 'found nothing'}; now at ${where}`);
+        }
         // --scroll=<css selector> brings that element into view before the capture.
         const scrollTo = argValue('scroll');
         if (scrollTo) {

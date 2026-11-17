@@ -338,13 +338,16 @@ body.playing .topnav { display: none; }
 .card.poster .art { aspect-ratio: 2 / 3; }
 .card.wide .art { aspect-ratio: 16 / 9; }
 .card .art img { width: 100%; height: 100%; object-fit: cover; }
-.card:hover .art, .card:focus-visible .art {
+.card:hover .art, .card:focus-visible .art, .card.split a.art:focus-visible {
   transform: translateY(-4px) scale(1.03);
   border-color: rgb(255 255 255 / 0.22);
   box-shadow: 0 18px 40px -18px color-mix(in srgb, var(--accent) 70%, black);
 }
 .card:focus-visible { outline: none; }
 .card:focus-visible .art { outline: 2px solid var(--accent); outline-offset: 3px; }
+.card.split a.art:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.card.split .caption a.name { justify-self: start; max-width: 100%; }
+.card.split .caption a.name:hover { text-decoration: underline; text-underline-offset: 3px; }
 .caption { display: grid; gap: 1px; padding: 0 2px; min-width: 0; }
 .caption .name, .caption .sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .caption .name { font-weight: 600; font-size: 14px; }
@@ -385,7 +388,7 @@ body.playing .topnav { display: none; }
   transform: scale(0.85);
   transition: opacity 0.25s, transform 0.25s var(--ease);
 }
-.card:hover .playhint, .card:focus-visible .playhint, .episode:hover .playhint, .episode:focus-visible .playhint { opacity: 1; transform: none; }
+.card:hover .playhint, .card:focus-visible .playhint, .card.split a.art:focus-visible .playhint, .episode:hover .playhint, .episode:focus-visible .playhint { opacity: 1; transform: none; }
 .ghost .art { background: linear-gradient(100deg, rgb(255 255 255 / 0.04) 30%, rgb(255 255 255 / 0.09) 50%, rgb(255 255 255 / 0.04) 70%); background-size: 300% 100%; animation: shimmer 1.6s linear infinite; }
 @keyframes shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
 
@@ -547,7 +550,8 @@ body.playing .topnav { display: none; }
 }
 .p-top .ctl { -webkit-app-region: no-drag; width: 44px; height: 44px; }
 .p-title { display: grid; line-height: 1.25; }
-.p-title strong { font-size: 19px; font-stretch: 85%; }
+.p-title strong, .p-title .p-name { font-size: 19px; font-weight: 700; font-stretch: 85%; justify-self: start; }
+.p-title .p-name:hover { text-decoration: underline; text-underline-offset: 3px; }
 .p-title span { color: var(--ink-2); font-size: 14px; }
 .p-bar {
   position: absolute;

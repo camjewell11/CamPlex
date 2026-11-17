@@ -54,24 +54,42 @@ function subline(item) {
   return String(item.year || '');
 }
 
-// 16:9 card for continue watching, episodes, and extras. Selecting it starts playback.
+// The page for a title: an episode's show (on the episode's season), or the title itself.
+export function pageHref(item) {
+  if (item.type !== 'episode') return `#/item/${item.ratingKey}`;
+  return `#/item/${item.grandparentRatingKey}${item.parentIndex != null ? `?season=${item.parentIndex}` : ''}`;
+}
+
+// 16:9 card for continue watching, episodes, and extras. Selecting the picture starts playback.
+// For movies and episodes, the name under the picture opens the movie or the show.
 export function landscapeCard(item, { playable = true, label } = {}) {
   const { plex } = state;
   const img = item.type === 'episode' || item.type === 'clip' ? item.thumb : item.art || item.thumb;
   const title = item.type === 'episode' ? item.grandparentTitle : item.title;
   const sub = label || (item.type === 'episode' ? `${episodeCode(item)} ${item.title}` : item.year ? String(item.year) : '');
-  const href = playable ? `#/play/${item.ratingKey}${item.viewOffset ? '?resume=1' : ''}` : `#/item/${item.ratingKey}`;
-  return h(
-    'a',
-    { class: 'card wide', href, ...focusHandlers(item) },
+  const art = (tag, attrs) =>
     h(
-      'div',
-      { class: 'art' },
+      tag,
+      { class: 'art', ...attrs },
       img ? h('img', { src: plex.img(img, 560, 315), alt: '', loading: 'lazy', decoding: 'async' }) : h('div', { class: 'noart' }, title),
       playable ? h('span', { class: 'playhint glass' }, svg('play', 18)) : null,
       progressBar(item),
+    );
+  if (!playable || (item.type !== 'episode' && item.type !== 'movie')) {
+    const href = playable ? `#/play/${item.ratingKey}${item.viewOffset ? '?resume=1' : ''}` : `#/item/${item.ratingKey}`;
+    return h('a', { class: 'card wide', href, ...focusHandlers(item) }, art('div'), h('div', { class: 'caption' }, h('span', { class: 'name' }, title), h('span', { class: 'sub' }, sub)));
+  }
+  const fn = () => hoverAmbient(item);
+  return h(
+    'div',
+    { class: 'card wide split', onmouseenter: fn, onfocusin: fn },
+    art('a', { href: `#/play/${item.ratingKey}${item.viewOffset ? '?resume=1' : ''}`, 'aria-label': `${item.viewOffset ? 'Resume' : 'Play'} ${title}${sub ? `, ${sub}` : ''}` }),
+    h(
+      'div',
+      { class: 'caption' },
+      h('a', { class: 'name', href: pageHref(item), title: item.type === 'episode' ? `Open ${title}` : `Open ${title} details` }, title),
+      h('span', { class: 'sub' }, sub),
     ),
-    h('div', { class: 'caption' }, h('span', { class: 'name' }, title), h('span', { class: 'sub' }, sub)),
   );
 }
 

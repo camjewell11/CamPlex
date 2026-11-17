@@ -4,6 +4,7 @@ import { state, savePrefs } from '../app.js';
 import { QUALITY } from '../plex.js';
 import { nextEpisode } from '../actions.js';
 import { setAmbient, ambientOf } from '../ambient.js';
+import { pageHref } from '../components.js';
 import { loadBif } from '../bif.js';
 
 const TEXT_SUBS = new Set(['srt', 'subrip', 'ass', 'ssa', 'webvtt', 'vtt', 'text']);
@@ -24,10 +25,22 @@ export async function renderPlayer(main, { id, params }) {
 
   // ---------- elements ----------
   const video = h('video', { class: 'player-video', autoplay: true, crossorigin: 'anonymous' });
-  const titleText =
-    item.type === 'episode'
-      ? [h('strong', {}, item.grandparentTitle), h('span', {}, `${episodeCode(item)} ${item.title}`)]
-      : [h('strong', {}, item.title), item.year ? h('span', {}, String(item.year)) : null];
+  // The show or movie name opens its page. The link replaces the player in history, so Back from
+  // that page doesn't start playback again.
+  const nameText = item.type === 'episode' ? item.grandparentTitle : item.title;
+  const name =
+    item.type === 'episode' || item.type === 'movie'
+      ? h('a', {
+          class: 'p-name',
+          href: pageHref(item),
+          title: item.type === 'episode' ? `Open ${nameText}` : `Open ${nameText} details`,
+          onclick: (e) => {
+            e.preventDefault();
+            location.replace(pageHref(item));
+          },
+        }, nameText)
+      : h('strong', {}, nameText);
+  const titleText = [name, item.type === 'episode' ? h('span', {}, `${episodeCode(item)} ${item.title}`) : item.year ? h('span', {}, String(item.year)) : null];
   const backBtn = h('button', { class: 'ctl glass', 'aria-label': 'Back', title: 'Back (Esc)', onclick: () => leave() }, svg('arrowLeft', 20));
   const top = h('div', { class: 'p-top' }, backBtn, h('div', { class: 'p-title' }, titleText));
 
