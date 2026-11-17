@@ -1,4 +1,4 @@
-// Home: a rotating hero for recent arrivals, then the rows configured in Settings.
+// Home: a rotating hero of unwatched movies and shows in progress, filtered by genre, then the rows configured in Settings.
 import { h, svg, duration } from '../util.js';
 import { state, errorPanel } from '../app.js';
 import { posterCard, landscapeCard, row, rowSkeleton, ratingsList } from '../components.js';
@@ -59,16 +59,47 @@ export async function resolveRow(r) {
   return [];
 }
 
+// A show counts as "currently watching" when it has unwatched episodes and the user watched one of
+// its episodes within this many days.
+export const WATCHING_DAYS = 90;
+
+// Featured candidates for one library: unwatched movies, newest first, or shows the user is
+// watching, most recently watched first. With genres on, Plex applies the genre filter itself,
+// because list responses carry only the first two genres of each title.
+export async function featuredCandidates(section, { genres = true } = {}) {
+  const { plex, prefs } = state;
+  const { include, exclude } = prefs.featured;
+  const params =
+    section.type === 'show'
+      ? { type: 2, unwatchedLeaves: 1, 'lastViewedAt>>': `-${WATCHING_DAYS}d`, sort: 'lastViewedAt:desc' }
+      : { type: 1, unwatched: 1, sort: 'addedAt:desc' };
+  if (genres && (include.length || exclude.length)) {
+    const all = await plex.genres(section.key);
+    const ids = (names) => all.filter((g) => names.includes(g.title)).map((g) => g.key).join(',');
+    if (include.length) {
+      params.genre = ids(include);
+      if (!params.genre) return [];
+    }
+    if (exclude.length) params['genre!'] = ids(exclude) || undefined;
+  }
+  const { items } = await plex.list(section.key, params, 0, section.type === 'show' ? 40 : 16);
+  // Marking episodes unwatched leaves the show's lastViewedAt set, so also require a watched episode.
+  return section.type === 'show' ? items.filter((i) => i.viewedLeafCount > 0) : items;
+}
+
+// The genre-filtered titles, plus shows the user chose to feature whatever their genres.
+async function featuredPool(section) {
+  const items = await featuredCandidates(section);
+  const always = state.prefs.featured.alwaysShow || [];
+  if (section.type !== 'show' || !always.length) return items;
+  const extra = (await featuredCandidates(section, { genres: false })).filter((i) => always.includes(i.ratingKey));
+  const seen = new Set(items.map((i) => i.ratingKey));
+  return [...items, ...extra.filter((i) => !seen.has(i.ratingKey))].sort((a, b) => (b.lastViewedAt || 0) - (a.lastViewedAt || 0));
+}
+
 async function buildHero(el, timers) {
   const { plex, sections } = state;
-  const pools = await Promise.all(
-    sections.map((s) =>
-      plex
-        .list(s.key, { sort: s.type === 'show' ? 'episode.addedAt:desc' : 'addedAt:desc', type: s.type === 'show' ? 2 : 1 }, 0, 16)
-        .then((r) => r.items)
-        .catch(() => []),
-    ),
-  );
+  const pools = await Promise.all(sections.map((s) => featuredPool(s).catch(() => [])));
   const candidates = pools.map((p) => p.filter((i) => i.art && imageOf(i, 'clearLogo')));
   const items = [];
   for (let i = 0; items.length < 6 && candidates.some((c) => c.length); i++) {

@@ -16,7 +16,7 @@ const argValue = (name) => {
 // Developer hooks (dev tools, screenshot mode, and the token from the environment) work only when
 // the app runs from source, not in the installed build.
 const DEV = !app.isPackaged && args.includes('--dev');
-const SHOT = app.isPackaged ? null : argValue('shot'); // --shot=out.png --route=#/home --wait=6000 [--size=1600x1000]
+const SHOT = app.isPackaged ? null : argValue('shot'); // --shot=out.png --route=#/home --wait=6000 [--size=1600x1000] [--scroll=<selector>]
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true } },
@@ -190,6 +190,14 @@ function createWindow() {
           "(() => { const v = document.querySelector('video'); if (!v) return ''; const s = document.querySelector('.skip'); return `time ${v.currentTime.toFixed(1)}, paused ${v.paused}, ready ${v.readyState}, size ${v.videoWidth}x${v.videoHeight}, skip ${s && !s.hidden ? s.textContent : 'hidden'}, tracks ${v.textTracks.length}`; })()",
         );
         if (state) console.log(`[shot] ${state}`);
+        const hero = await win.webContents.executeJavaScript("[...document.querySelectorAll('.pager .dot')].map((d) => d.getAttribute('aria-label')).join(' | ')");
+        if (hero) console.log(`[shot] featured: ${hero}`);
+        // --scroll=<css selector> brings that element into view before the capture.
+        const scrollTo = argValue('scroll');
+        if (scrollTo) {
+          await win.webContents.executeJavaScript(`document.querySelector(${JSON.stringify(scrollTo)})?.scrollIntoView({ block: 'center', behavior: 'instant' })`);
+          await new Promise((r) => setTimeout(r, 400));
+        }
         const img = await win.webContents.capturePage();
         fs.writeFileSync(SHOT, img.toPNG());
         await endActiveStream();

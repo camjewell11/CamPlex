@@ -16,6 +16,37 @@ export async function savePrefs() {
   await window.marquee.settings.set(state.prefs);
 }
 
+// Genres for the featured carousel on Home. A title must have at least one genre from include and
+// none from exclude. These are Plex genre names, so one list works for every library. alwaysShow
+// holds ratingKeys of shows the user features whatever their genres. rev counts the changes to
+// these defaults that upgradeFeatured() applies to saved settings.
+export const DEFAULT_FEATURED = {
+  rev: 2,
+  include: ['Action', 'Action/Adventure', 'Adventure', 'Crime', 'Drama', 'Fantasy', 'Mystery', 'Sci-Fi & Fantasy', 'Science Fiction', 'Suspense', 'Thriller', 'War', 'War & Politics', 'Western'],
+  exclude: ['Children', 'Family', 'Food', 'Game Show', 'Home and Garden', 'Horror', 'Kids', 'Musical', 'Reality', 'Romance', 'Soap', 'Talk', 'Talk Show', 'Travel'],
+  alwaysShow: [],
+};
+
+// Brings featured settings saved by an older version up to date. Each step changes only the genres
+// that the matching change to the defaults touched, so the user's own edits stay.
+function upgradeFeatured(f) {
+  const move = (name, to) => {
+    const from = to === 'include' ? 'exclude' : 'include';
+    f[from] = f[from].filter((n) => n !== name);
+    if (!f[to].includes(name)) f[to] = [...f[to], name].sort();
+  };
+  let changed = false;
+  if ((f.rev || 1) < 2) {
+    f.exclude = f.exclude.filter((n) => n !== 'Documentary');
+    move('Fantasy', 'include');
+    move('Horror', 'exclude');
+    f.alwaysShow ||= [];
+    f.rev = 2;
+    changed = true;
+  }
+  return changed;
+}
+
 export function defaultPrefs(sections, hubs) {
   const rows = [{ id: 'continue', type: 'continue', title: 'Continue watching', visible: true }];
   for (const s of sections) {
@@ -38,7 +69,7 @@ export function defaultPrefs(sections, hubs) {
     rows.push({ id: 'custom-toprated', type: 'filter', title: 'Highly rated, not yet watched', section: movies.key, sort: 'audienceRating:desc', unwatched: true, visible: true });
     rows.push({ id: 'custom-random', type: 'filter', title: 'Something different tonight', section: movies.key, sort: 'random', unwatched: true, visible: true });
   }
-  return { themeMusic: true, autoplayNext: true, ambientOnHover: true, quality: 'original', rows };
+  return { themeMusic: true, autoplayNext: true, ambientOnHover: true, quality: 'original', featured: structuredClone(DEFAULT_FEATURED), rows };
 }
 
 const ROUTES = [
@@ -145,6 +176,13 @@ async function boot() {
     // Rows generated before library names were cleaned up still carry the "V3" suffix.
     for (const r of state.prefs.rows || []) {
       if (!r.id.startsWith('custom-')) r.title = r.title.replace(/\s+V\d+\b/g, '');
+    }
+    // Settings saved before the featured genre filter existed.
+    if (!state.prefs.featured) {
+      state.prefs.featured = structuredClone(DEFAULT_FEATURED);
+      await savePrefs();
+    } else if (upgradeFeatured(state.prefs.featured)) {
+      await savePrefs();
     }
   }
   mainEl = h('main', { class: 'main', id: 'main' });

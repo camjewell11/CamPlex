@@ -1,9 +1,10 @@
 // Settings: server, playback, look, and the Home rows editor.
 import { h, svg } from '../util.js';
-import { state, savePrefs, defaultPrefs } from '../app.js';
+import { state, savePrefs, defaultPrefs, DEFAULT_FEATURED } from '../app.js';
 import { QUALITY } from '../plex.js';
 import { setAmbient } from '../ambient.js';
 import { SORTS } from './library.js';
+import { WATCHING_DAYS, featuredCandidates } from './home.js';
 
 export async function renderSettings(main) {
   const { prefs, server, sections, plex } = state;
@@ -110,6 +111,7 @@ export async function renderSettings(main) {
           toggle('ambientOnHover', 'Light follows the pointer', 'The window background takes the colors of the title you point at.'),
         ),
       ),
+      featuredPanel(),
       h(
         'section',
         { class: 'panel glass rows-panel' },
@@ -121,6 +123,111 @@ export async function renderSettings(main) {
         addRowForm(() => drawRows()),
       ),
     ),
+  );
+}
+
+// Genre lists for the featured carousel. A genre can be in one list at most, so choosing it in one
+// list removes it from the other. Below them, shows the user is watching that the genres hide, each
+// with a checkbox to feature it anyway.
+function featuredPanel() {
+  const { plex, sections, prefs } = state;
+  const f = prefs.featured;
+  const include = h('div', { class: 'chips', role: 'group', 'aria-label': 'Show titles with any of these genres' });
+  const exclude = h('div', { class: 'chips exclude', role: 'group', 'aria-label': 'Never show titles with these genres' });
+  const hidden = h('ul', { class: 'hidden-shows' });
+  let names = [];
+  f.alwaysShow ||= [];
+
+  let hiddenTimer;
+  let hiddenRun = 0;
+  function drawHidden() {
+    clearTimeout(hiddenTimer);
+    hiddenTimer = setTimeout(async () => {
+      const run = ++hiddenRun;
+      const shows = sections.filter((s) => s.type === 'show');
+      const lists = await Promise.all(
+        shows.map(async (s) => {
+          const [all, kept] = await Promise.all([featuredCandidates(s, { genres: false }), featuredCandidates(s)]);
+          const keep = new Set(kept.map((i) => i.ratingKey));
+          return all.filter((i) => !keep.has(i.ratingKey) || f.alwaysShow.includes(i.ratingKey));
+        }),
+      ).catch(() => []);
+      if (run !== hiddenRun) return;
+      const items = lists.flat();
+      hidden.replaceChildren(
+        ...(items.length
+          ? items.map((it) => {
+              const box = h('input', { type: 'checkbox', checked: f.alwaysShow.includes(it.ratingKey) });
+              box.addEventListener('change', () => {
+                f.alwaysShow = box.checked ? [...new Set([...f.alwaysShow, it.ratingKey])] : f.alwaysShow.filter((k) => k !== it.ratingKey);
+                savePrefs();
+              });
+              const genres = (it.Genre || []).map((g) => g.tag).join(', ');
+              return h('li', {}, h('label', { class: 'setting' }, box, h('span', {}, h('strong', {}, it.title), h('small', {}, genres ? `Feature anyway (${genres})` : 'Feature anyway'))));
+            })
+          : [h('li', { class: 'muted' }, 'The genres hide none of the shows you are watching.')]),
+      );
+    }, 300);
+  }
+
+  function draw() {
+    const chips = (list, other) =>
+      names.map((name) => {
+        const on = f[list].includes(name);
+        return h(
+          'button',
+          {
+            class: 'button chip',
+            type: 'button',
+            'aria-pressed': String(on),
+            onclick: () => {
+              f[list] = on ? f[list].filter((n) => n !== name) : [...f[list], name].sort();
+              f[other] = f[other].filter((n) => n !== name);
+              savePrefs();
+              draw();
+              drawHidden();
+              (list === 'include' ? include : exclude).querySelector(`[data-name="${CSS.escape(name)}"]`)?.focus();
+            },
+            'data-name': name,
+          },
+          name,
+        );
+      });
+    include.replaceChildren(...chips('include', 'exclude'));
+    exclude.replaceChildren(...chips('exclude', 'include'));
+  }
+
+  Promise.all(sections.map((s) => plex.genres(s.key).catch(() => []))).then((lists) => {
+    names = [...new Set([...lists.flat().map((g) => g.title), ...f.include, ...f.exclude])].sort((a, b) => a.localeCompare(b));
+    draw();
+  });
+  drawHidden();
+
+  const reset = h('button', { class: 'button glass', type: 'button' }, 'Restore default genres');
+  reset.addEventListener('click', async () => {
+    const { include, exclude } = structuredClone(DEFAULT_FEATURED);
+    Object.assign(f, { include, exclude, rev: DEFAULT_FEATURED.rev });
+    await savePrefs();
+    draw();
+    drawHidden();
+  });
+
+  return h(
+    'section',
+    { class: 'panel glass featured-panel' },
+    h('h2', {}, 'Featured on Home'),
+    h(
+      'p',
+      { class: 'muted' },
+      `The carousel shows unwatched movies, newest first, and shows with an episode watched in the last ${WATCHING_DAYS} days. A title appears only when it has at least one genre from the first list and none from the second.`,
+    ),
+    h('h3', {}, 'Show titles with any of these genres'),
+    include,
+    h('h3', {}, 'Never show titles with these genres'),
+    exclude,
+    h('div', { class: 'actions' }, reset),
+    h('h3', {}, 'Shows you are watching that these genres hide'),
+    hidden,
   );
 }
 
