@@ -1,5 +1,5 @@
 // Marquee main process: window, Plex sign-in, settings, and CORS for media.
-const { app, BrowserWindow, ipcMain, protocol, net, session, shell, safeStorage } = require('electron');
+const { app, BrowserWindow, ipcMain, protocol, net, session, shell, safeStorage, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -16,7 +16,7 @@ const argValue = (name) => {
 // Developer hooks (dev tools, screenshot mode, and the token from the environment) work only when
 // the app runs from source, not in the installed build.
 const DEV = !app.isPackaged && args.includes('--dev');
-const SHOT = app.isPackaged ? null : argValue('shot'); // --shot=out.png --route=#/home --wait=6000 [--size=1600x1000] [--click=<selector>] [--scroll=<selector>]
+const SHOT = app.isPackaged ? null : argValue('shot'); // --shot=out.png --route=#/home --wait=6000 [--size=1600x1000] [--click=<selector>] [--eval=<file>] [--scroll=<selector>]
 
 protocol.registerSchemesAsPrivileged([
   { scheme: 'app', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true } },
@@ -170,6 +170,17 @@ function createWindow() {
     webPreferences: { preload: path.join(ROOT, 'preload.js'), contextIsolation: true, sandbox: true, backgroundThrottling: !SHOT },
   });
   win.setMenuBarVisibility(false);
+  win.webContents.setWindowOpenHandler(({ frameName, features }) => {
+    if (frameName !== 'marquee-pip') return { action: 'deny' };
+    const aspect = Number(/aspect=([\d.]+)/.exec(features)?.[1]) || 16 / 9;
+    return { action: 'allow', overrideBrowserWindowOptions: pipOptions(aspect) };
+  });
+  win.webContents.on('did-create-window', (child, { frameName }) => {
+    if (frameName === 'marquee-pip') setupPip(child);
+  });
+  win.on('closed', () => {
+    if (pipWin && !pipWin.isDestroyed()) pipWin.destroy();
+  });
   const route = argValue('route') || '';
   win.loadURL(`app://marquee/renderer/index.html${route}`);
   win.on('close', (e) => {
@@ -201,6 +212,12 @@ function createWindow() {
           const where = await win.webContents.executeJavaScript('`${location.hash} (history ${history.length})`');
           console.log(`[shot] click ${ok ? 'done' : 'found nothing'}; now at ${where}`);
         }
+        // --eval=<file> runs that script in the page (as a user gesture) and prints what it returns.
+        const evalFile = argValue('eval');
+        if (evalFile) {
+          const out = await win.webContents.executeJavaScript(fs.readFileSync(evalFile, 'utf8'), true).catch((e) => `error: ${e.message}`);
+          console.log(`[shot] eval: ${typeof out === 'string' ? out : JSON.stringify(out)}`);
+        }
         // --scroll=<css selector> brings that element into view before the capture.
         const scrollTo = argValue('scroll');
         if (scrollTo) {
@@ -209,12 +226,98 @@ function createWindow() {
         }
         const img = await win.webContents.capturePage();
         fs.writeFileSync(SHOT, img.toPNG());
+        // A PiP window that is still open gets its own capture next to the main one (<name>-pip.png).
+        if (pipAlive()) {
+          const pipImg = await pipWin.webContents.capturePage();
+          fs.writeFileSync(SHOT.replace(/(\.png)?$/i, '-pip.png'), pipImg.toPNG());
+        }
         await endActiveStream();
         app.quit();
       }, Number(argValue('wait') || 6000));
     });
   }
 }
+
+// ---------- picture-in-picture ----------
+// The PiP window is a frameless, always-on-top child that the player opens with window.open. The
+// player mirrors its video into it (captureStream), so the stream itself never moves. Its width and
+// position persist in settings.json as pipBounds; the height follows the video's aspect ratio.
+let pipWin = null;
+let pipAspect = 16 / 9;
+const PIP_MIN_W = 240;
+
+function pipOptions(aspect) {
+  pipAspect = aspect;
+  const area = screen.getDisplayMatching(win.getBounds()).workArea;
+  const saved = readSettings().pipBounds;
+  let width = Math.round(Math.min(640, Math.max(320, area.width / 4)));
+  let x = area.x + area.width - width - 16;
+  let y = null;
+  if (saved && saved.width >= PIP_MIN_W) {
+    const onScreen = screen.getAllDisplays().some((d) => {
+      const a = d.workArea;
+      return saved.x + 40 < a.x + a.width && saved.x + saved.width - 40 > a.x && saved.y >= a.y - 10 && saved.y + 40 < a.y + a.height;
+    });
+    if (onScreen) ({ width, x, y } = saved);
+  }
+  const height = Math.round(width / aspect);
+  if (y === null) y = area.y + area.height - height - 16;
+  return {
+    x,
+    y,
+    width,
+    height,
+    minWidth: PIP_MIN_W,
+    minHeight: Math.round(PIP_MIN_W / aspect),
+    frame: false,
+    alwaysOnTop: true,
+    resizable: true,
+    maximizable: false,
+    minimizable: false,
+    fullscreenable: true,
+    skipTaskbar: false,
+    title: 'Marquee - Picture-in-picture',
+    icon: path.join(ROOT, 'build', 'icon.png'),
+    backgroundColor: '#000000',
+    show: !SHOT,
+    webPreferences: { contextIsolation: true, sandbox: true, backgroundThrottling: false },
+  };
+}
+
+function setupPip(child) {
+  pipWin = child;
+  child.setMenuBarVisibility(false);
+  child.setAlwaysOnTop(true, 'floating');
+  child.setAspectRatio(pipAspect);
+  // Keep the main page "visible" while it's minimized, so Chromium doesn't suspend the video that
+  // feeds the mirror or slow the player's timers.
+  win.webContents.setBackgroundThrottling(false);
+  const save = () => {
+    if (child.isDestroyed() || child.isFullScreen()) return;
+    const b = child.getBounds();
+    const s = readSettings();
+    s.pipBounds = { x: b.x, y: b.y, width: b.width };
+    writeSettings(s);
+  };
+  let saveTimer;
+  const later = () => {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(save, 400);
+  };
+  child.on('moved', later);
+  child.on('resized', later);
+  child.on('enter-full-screen', () => win.webContents.send('pip:fullscreen', true));
+  child.on('leave-full-screen', () => win.webContents.send('pip:fullscreen', false));
+  child.on('closed', () => {
+    clearTimeout(saveTimer);
+    pipWin = null;
+    if (!win.isDestroyed()) {
+      win.webContents.setBackgroundThrottling(!SHOT);
+      win.webContents.send('pip:closed');
+    }
+  });
+}
+const pipAlive = () => pipWin && !pipWin.isDestroyed();
 
 // Match the AUMID on the installer's shortcuts (build.appId), so Windows shows the Marquee icon
 // on the taskbar and groups the window with its pinned shortcut.
@@ -277,6 +380,29 @@ app.whenReady().then(() => {
   ipcMain.handle('window:fullscreen', (_e, on) => {
     win.setFullScreen(on === undefined ? !win.isFullScreen() : !!on);
     return win.isFullScreen();
+  });
+  ipcMain.on('pip:aspect', (_e, ratio) => {
+    if (!pipAlive() || !(ratio > 0.2 && ratio < 5)) return;
+    pipAspect = ratio;
+    pipWin.setAspectRatio(ratio);
+    pipWin.setMinimumSize(PIP_MIN_W, Math.round(PIP_MIN_W / ratio));
+    if (!pipWin.isFullScreen()) {
+      const b = pipWin.getBounds();
+      const height = Math.round(b.width / ratio);
+      // Grow or shrink from the bottom edge, so a window docked at the bottom stays there.
+      pipWin.setBounds({ x: b.x, y: b.y + b.height - height, width: b.width, height });
+    }
+  });
+  ipcMain.on('pip:move', (_e, x, y) => {
+    if (pipAlive() && !pipWin.isFullScreen()) pipWin.setPosition(Math.round(x), Math.round(y));
+  });
+  ipcMain.handle('pip:fullscreen', () => {
+    if (pipAlive()) pipWin.setFullScreen(!pipWin.isFullScreen());
+  });
+  ipcMain.on('pip:focusMain', () => {
+    if (win.isMinimized()) win.restore();
+    win.show();
+    win.focus();
   });
   ipcMain.handle('open:external', (_e, url) => {
     if (/^https:\/\//.test(url)) shell.openExternal(url);

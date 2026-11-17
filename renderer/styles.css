@@ -681,6 +681,50 @@ body.playing .topnav { display: none; }
 .p-flash.go { animation: flash 0.6s ease-out; }
 @keyframes flash { 0% { opacity: 1; transform: scale(0.8); } 100% { opacity: 0; transform: scale(1.25); } }
 
+/* ---------- picture-in-picture ---------- */
+/* Firefox-style tab on the right edge of the video: an icon that opens out to show its label. */
+.pip-toggle {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  height: 40px;
+  padding: 0 12px;
+  border-right: 0;
+  border-radius: 999px 0 0 999px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  -webkit-app-region: no-drag;
+  transition: opacity 0.35s ease, background 0.2s;
+}
+.pip-toggle .pip-label { max-width: 0; margin-left: 0; overflow: hidden; opacity: 0; transition: max-width 0.3s var(--ease), margin-left 0.3s var(--ease), opacity 0.2s; }
+.pip-toggle:hover, .pip-toggle:focus-visible { background: var(--glass-hi); }
+.pip-toggle:hover .pip-label, .pip-toggle:focus-visible .pip-label { max-width: 200px; margin-left: 10px; opacity: 1; }
+.player.idle .pip-toggle, .player.in-pip .pip-toggle { opacity: 0; pointer-events: none; }
+/* Shown in the main player while the video plays in the PiP window. */
+.p-pipnote {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 16px;
+  background: #0b0c10;
+  color: var(--ink-2);
+  text-align: center;
+}
+.p-pipnote[hidden] { display: none; }
+.p-pipnote strong { font-size: 20px; color: var(--ink); }
+.player.in-pip { cursor: auto; }
+.player.in-pip .p-loading, .player.in-pip .p-flash, .player.in-pip .skip { display: none; }
+.player.in-pip .p-top, .player.in-pip .p-bar { opacity: 1; transform: none; pointer-events: auto; }
+/* A player in PiP whose page the user has left keeps running here, out of sight. */
+.bg-player { position: fixed; left: 0; top: 0; width: 1px; height: 1px; overflow: hidden; opacity: 0; pointer-events: none; contain: strict; }
+
 /* ---------- smaller windows ---------- */
 @media (max-width: 1180px) {
   .detail-top { grid-template-columns: 1fr; }

@@ -9,6 +9,7 @@ import { renderDetail } from './views/detail.js';
 import { renderPlayer } from './views/player.js';
 import { renderSettings } from './views/settings.js';
 import { renderSearch } from './views/search.js';
+import * as pip from './pip.js';
 
 export const state = { plex: null, sections: [], prefs: null, server: null };
 
@@ -84,26 +85,92 @@ const ROUTES = [
 let cleanup = null;
 let navEl, mainEl;
 
+// ---------- background player ----------
+// A player in picture-in-picture keeps playing when the user goes to another page. The router
+// moves its elements into a hidden host (a <video> removed from the page would pause) and keeps
+// its cleanup here until the user returns to it, closes the PiP window, or plays something else.
+let parked = null;
+let bgHost = null;
+const host = () => {
+  if (!bgHost) {
+    bgHost = h('div', { class: 'bg-player', 'aria-hidden': 'true' });
+    document.body.append(bgHost);
+  }
+  return bgHost;
+};
+// moveBefore keeps a playing video's state; append is the fallback for older Chromium.
+const moveInto = (parent, el) => (parent.moveBefore ? parent.moveBefore(el, null) : parent.append(el));
+function runCleanup(c) {
+  try {
+    c();
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+export function endBackground() {
+  const c = parked;
+  parked = null;
+  if (!c) return;
+  runCleanup(c);
+  c.root.remove();
+}
+
+// Plays the next episode in the PiP window while the user stays on another page.
+export async function playInBackground(id) {
+  pip.hold();
+  endBackground();
+  try {
+    const c = await renderPlayer(host(), { id, params: new URLSearchParams('pip=1&bg=1') });
+    if (!c.keepAlive()) {
+      runCleanup(c);
+      c.root.remove();
+      pip.close();
+      return;
+    }
+    c.park(true);
+    parked = c;
+  } catch (e) {
+    console.error(e);
+    pip.close();
+  }
+}
+
 async function route() {
   const [hashPath, query = ''] = (location.hash || '#/home').split('?');
   const params = new URLSearchParams(query);
-  if (cleanup) {
-    try {
-      cleanup();
-    } catch (e) {
-      console.error(e);
-    }
-    cleanup = null;
-  }
   const match = ROUTES.find(([re]) => re.test(hashPath));
+  const id = match ? hashPath.match(match[0])[1] : null;
+  const isPlayer = !!match && hashPath.startsWith('#/play');
+  if (cleanup) {
+    const c = cleanup;
+    cleanup = null;
+    if (c.keepAlive?.() && !isPlayer) {
+      endBackground();
+      c.park(true);
+      moveInto(host(), c.root);
+      parked = c;
+    } else runCleanup(c);
+  }
   if (!match) {
     location.hash = '#/home';
     return;
   }
-  const id = hashPath.match(match[0])[1];
-  const isPlayer = hashPath.startsWith('#/play');
   document.body.classList.toggle('playing', isPlayer);
   updateNav(hashPath);
+  if (isPlayer && parked) {
+    if (parked.ratingKey === id) {
+      // Back to the player that's running in picture-in-picture.
+      mainEl.replaceChildren();
+      moveInto(mainEl, parked.root);
+      cleanup = parked;
+      parked = null;
+      cleanup.park(false);
+      return;
+    }
+    if (params.get('pip')) pip.hold();
+    endBackground();
+  }
   mainEl.replaceChildren();
   mainEl.scrollTop = 0;
   window.scrollTo(0, 0);

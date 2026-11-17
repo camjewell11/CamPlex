@@ -21,4 +21,16 @@ contextBridge.exposeInMainWorld('marquee', {
   // The requests that end the current stream, so the main process can send them if the window closes.
   setActiveStream: (urls) => ipcRenderer.send('player:active', urls),
   openExternal: (url) => ipcRenderer.invoke('open:external', url),
+  pip: {
+    aspect: (ratio) => ipcRenderer.send('pip:aspect', ratio),
+    move: (x, y) => ipcRenderer.send('pip:move', x, y),
+    fullscreen: () => ipcRenderer.invoke('pip:fullscreen'),
+    focusMain: () => ipcRenderer.send('pip:focusMain'),
+    on: (event, cb) => {
+      const channel = `pip:${event}`;
+      const listener = (_e, v) => cb(v);
+      ipcRenderer.on(channel, listener);
+      return () => ipcRenderer.removeListener(channel, listener);
+    },
+  },
 });

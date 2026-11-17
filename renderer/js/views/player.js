@@ -1,11 +1,12 @@
 // Player: DASH stream from Plex, glass controls, markers, track menus, thumbnails, and up next.
 import { h, svg, clock, episodeCode, uuid } from '../util.js';
-import { state, savePrefs } from '../app.js';
+import { state, savePrefs, playInBackground, endBackground } from '../app.js';
 import { QUALITY } from '../plex.js';
 import { nextEpisode } from '../actions.js';
 import { setAmbient, ambientOf } from '../ambient.js';
 import { pageHref } from '../components.js';
 import { loadBif } from '../bif.js';
+import * as pip from '../pip.js';
 
 const TEXT_SUBS = new Set(['srt', 'subrip', 'ass', 'ssa', 'webvtt', 'vtt', 'text']);
 // The app shows a subtitle itself only when it's a separate text file that Plex can send whole.
@@ -16,7 +17,8 @@ export async function renderPlayer(main, { id, params }) {
   const { plex, prefs } = state;
   const item = await plex.metadata(id, { includeMarkers: 1, includeChapters: 1 });
   if (!item?.Media?.length) throw new Error('This title has no playable file in Plex.');
-  setAmbient(ambientOf(item));
+  // A player started behind another page (the next episode in picture-in-picture) leaves that page's colors alone.
+  if (!params.get('bg')) setAmbient(ambientOf(item));
   const part = item.Media[0].Part[0];
   const streams = part.Stream || [];
   const markers = item.Marker || [];
@@ -53,6 +55,16 @@ export async function renderPlayer(main, { id, params }) {
   const tracksBtn = h('button', { class: 'ctl', 'aria-label': 'Audio, subtitles, and quality', title: 'Audio, subtitles, and quality (C)' }, svg('tracks', 20));
   const infoBtn = h('button', { class: 'ctl', 'aria-label': 'Playback details', title: 'Playback details (I)' }, svg('info', 20));
   const fullBtn = h('button', { class: 'ctl', 'aria-label': 'Full screen', title: 'Full screen (F)' }, svg('full', 20));
+  const pipBtn = h('button', { class: 'ctl', 'aria-label': 'Picture-in-picture', title: 'Picture-in-picture (P)' }, svg('pip', 20));
+  // Firefox-style toggle on the right edge of the video; it opens out to show its label on hover.
+  const pipEdge = h('button', { class: 'pip-toggle glass', 'aria-label': 'Picture-in-picture', title: 'Picture-in-picture (P)' }, svg('pip', 18), h('span', { class: 'pip-label' }, 'Picture-in-picture'));
+  const pipNote = h(
+    'div',
+    { class: 'p-pipnote', hidden: true },
+    svg('pip', 44),
+    h('strong', {}, 'Playing in picture-in-picture'),
+    h('button', { class: 'button glass', onclick: () => returnFromPip() }, svg('unpip', 16), 'Bring it back'),
+  );
 
   const played = h('div', { class: 's-played' });
   const buffered = h('div', { class: 's-buffered' });
@@ -73,7 +85,7 @@ export async function renderPlayer(main, { id, params }) {
     'div',
     { class: 'p-bar glass' },
     scrub,
-    h('div', { class: 'p-buttons' }, backTen, playBtn, fwdTen, muteBtn, vol, timeEl, h('span', { class: 'spacer' }), tracksBtn, infoBtn, fullBtn),
+    h('div', { class: 'p-buttons' }, backTen, playBtn, fwdTen, muteBtn, vol, timeEl, h('span', { class: 'spacer' }), tracksBtn, infoBtn, pipBtn, fullBtn),
   );
   const skipBtn = h('button', { class: 'skip glass', hidden: true });
   const panel = h('div', { class: 'p-panel glass', hidden: true });
@@ -82,7 +94,7 @@ export async function renderPlayer(main, { id, params }) {
   const flash = h('div', { class: 'p-flash' });
   const message = h('div', { class: 'p-message glass', hidden: true });
   const loading = h('div', { class: 'p-loading' }, h('span'));
-  const root = h('div', { class: 'player' }, video, loading, flash, top, skipBtn, upNext, panel, stats, message, bar);
+  const root = h('div', { class: 'player' }, video, pipNote, loading, flash, top, pipEdge, skipBtn, upNext, panel, stats, message, bar);
   main.append(root);
 
   // ---------- stream ----------
@@ -166,6 +178,8 @@ export async function renderPlayer(main, { id, params }) {
     localStorage.setItem('volume', vol.value);
   };
   fullBtn.onclick = () => window.marquee.fullscreen();
+  pipBtn.onclick = () => togglePip();
+  pipEdge.onclick = () => togglePip();
   const offFullscreen = window.marquee.onFullscreen((on) => fullBtn.replaceChildren(svg(on ? 'exitfull' : 'full', 20)));
   tracksBtn.onclick = () => {
     stats.hidden = true;
@@ -193,6 +207,7 @@ export async function renderPlayer(main, { id, params }) {
   video.addEventListener('canplay', () => (loading.hidden = true));
   video.addEventListener('volumechange', () => {
     muteBtn.replaceChildren(svg(video.muted || video.volume === 0 ? 'mute' : 'volume', 20));
+    vol.value = video.muted ? 0 : video.volume;
     localStorage.setItem('muted', video.muted ? '1' : '0');
   });
   video.addEventListener('timeupdate', tick);
@@ -315,7 +330,14 @@ export async function renderPlayer(main, { id, params }) {
   }
   function goNext() {
     clearInterval(countdown);
-    if (next) location.replace(`#/play/${next.ratingKey}`);
+    if (!next) return;
+    // In picture-in-picture the next episode plays in the same window. When the user has moved on
+    // to another page, it starts there without leaving that page.
+    if (parked) playInBackground(next.ratingKey);
+    else {
+      if (inPip) pip.hold();
+      location.replace(`#/play/${next.ratingKey}${inPip ? '?pip=1' : ''}`);
+    }
   }
   async function onEnded() {
     report('stopped');
@@ -323,7 +345,10 @@ export async function renderPlayer(main, { id, params }) {
       if (!next) next = await nextEpisode(item).catch(() => null);
       if (next) return goNext();
     }
-    leave();
+    if (parked) {
+      pip.close();
+      endBackground();
+    } else leave();
   }
 
   // ---------- tracks panel ----------
@@ -428,6 +453,57 @@ export async function renderPlayer(main, { id, params }) {
   }
   const heartbeat = setInterval(() => !video.paused && report('playing'), 10000);
 
+  // ---------- picture-in-picture ----------
+  // inPip: the video shows in the PiP window. parked: the user has left this page, and the app keeps
+  // the player in a hidden host so playback continues (see app.js).
+  let inPip = false;
+  let parked = false;
+  const pipSource = {
+    video,
+    total,
+    title: nameText,
+    subtitle: item.type === 'episode' ? `${episodeCode(item)} ${item.title}` : item.year ? String(item.year) : '',
+    toggle,
+    seek: (t) => seekTo(t),
+    skip: () => (skipBtn.hidden ? null : { label: skipBtn.textContent, run: () => skipBtn.click() }),
+    onReturn: () => returnFromPip(),
+    onClose: () => closedPip(),
+  };
+  function setPip(on) {
+    inPip = on;
+    root.classList.toggle('in-pip', on);
+    pipNote.hidden = !on;
+    pipBtn.replaceChildren(svg(on ? 'unpip' : 'pip', 20));
+    pipBtn.title = on ? 'Back from picture-in-picture (P)' : 'Picture-in-picture (P)';
+  }
+  function enterPip() {
+    if (inPip || !pip.enter(pipSource)) return;
+    panel.hidden = true;
+    stats.hidden = true;
+    window.marquee.fullscreen(false);
+    setPip(true);
+  }
+  function returnFromPip() {
+    if (!inPip) return;
+    setPip(false);
+    pip.release(pipSource);
+    window.marquee.pip.focusMain();
+    if (parked) location.hash = `#/play/${item.ratingKey}`;
+  }
+  // The PiP window closed with its close button: pause, as Firefox does. A player that the user
+  // already left has nothing to return to, so it stops.
+  function closedPip() {
+    setPip(false);
+    video.pause();
+    if (parked) endBackground();
+  }
+  function togglePip() {
+    if (inPip) returnFromPip();
+    else enterPip();
+  }
+  // The previous episode was in picture-in-picture, so this one continues there.
+  if (params.get('pip') && pip.isOpen() && pip.attach(pipSource)) setPip(true);
+
   // ---------- idle hiding and keys ----------
   let idle;
   function poke() {
@@ -441,6 +517,12 @@ export async function renderPlayer(main, { id, params }) {
   poke();
 
   function onKey(e) {
+    if (parked) return;
+    if (e.key === ']' && e.ctrlKey && e.shiftKey) {
+      e.preventDefault();
+      togglePip();
+      return;
+    }
     if (e.target.tagName === 'INPUT' && e.target.type !== 'range' && e.target.type !== 'radio') return;
     const k = e.key.toLowerCase();
     const handled = {
@@ -458,6 +540,7 @@ export async function renderPlayer(main, { id, params }) {
       i: () => infoBtn.click(),
       s: () => !skipBtn.hidden && skipBtn.click(),
       n: () => next && goNext(),
+      p: () => togglePip(),
       escape: () => {
         if (!panel.hidden || !stats.hidden) {
           panel.hidden = true;
@@ -479,7 +562,11 @@ export async function renderPlayer(main, { id, params }) {
     else location.hash = `#/item/${item.type === 'episode' ? item.grandparentRatingKey : item.ratingKey}`;
   }
 
-  return () => {
+  const cleanup = () => {
+    if (inPip) {
+      inPip = false;
+      pip.release(pipSource);
+    }
     document.removeEventListener('keydown', onKey);
     offFullscreen();
     clearInterval(heartbeat);
@@ -492,6 +579,15 @@ export async function renderPlayer(main, { id, params }) {
     bif?.dispose();
     window.marquee.fullscreen(false);
   };
+  // The router keeps a player in picture-in-picture alive when the user goes to another page.
+  cleanup.keepAlive = () => inPip;
+  cleanup.park = (on) => {
+    parked = on;
+    if (!on) poke();
+  };
+  cleanup.ratingKey = String(item.ratingKey);
+  cleanup.root = root;
+  return cleanup;
 }
 
 // Convert SRT or ASS text to WebVTT. ASS styling is dropped; line breaks are kept.

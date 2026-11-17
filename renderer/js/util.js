@@ -35,6 +35,8 @@ const ICONS = {
   full: '<path d="M4 4h6v2H6v4H4zm10 0h6v6h-2V6h-4zM4 14h2v4h4v2H4zm14 0h2v6h-6v-2h4z" fill="currentColor"/>',
   exitfull: '<path d="M8 4h2v6H4V8h4zm6 0h2v4h4v2h-6zM4 14h6v6H8v-4H4zm10 0h6v2h-4v4h-2z" fill="currentColor"/>',
   tracks: '<path d="M3 5h18v14H3zm2 2v10h14V7zm2 6h4v2H7zm6 0h4v2h-4zm-6-3h10v2H7z" fill="currentColor"/>',
+  pip: '<path d="M2 4h20v16H2zm2 2v12h16V6z" fill="currentColor"/><path d="M12 11h7v6h-7z" fill="currentColor"/>',
+  unpip: '<path d="M2 4h20v16H2zm2 2v12h16V6z" fill="currentColor"/><path d="M7 8h6v2h-2.6l4.3 4.3-1.4 1.4L9 11.4V14H7z" fill="currentColor"/>',
   info: '<path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm1 15h-2v-6h2zm0-8h-2V7h2z" fill="currentColor"/>',
   arrowLeft: '<path d="M15.4 5.4 14 4l-8 8 8 8 1.4-1.4L8.8 12z" fill="currentColor"/>',
   arrowRight: '<path d="m8.6 5.4 1.4-1.4 8 8-8 8-1.4-1.4 6.6-6.6z" fill="currentColor"/>',
