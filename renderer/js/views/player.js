@@ -105,7 +105,14 @@ export async function renderPlayer(main, { id, params }) {
   let subTrackEl = null;
   const dashjs = window.dashjs;
 
-  function start(atSec) {
+  // Plex ends a transcode after 180 seconds without segment requests. The pause heartbeat below
+  // pings it, but a sleeping computer or a network drop can still end it, and then every segment
+  // request gets a 404 (dash.js download errors 25 to 28). Start a new transcode at the same
+  // position instead of failing, at most once a minute.
+  const DOWNLOAD_ERRORS = new Set([25, 26, 27, 28]);
+  let lastRestart = 0;
+
+  function start(atSec, { paused = false } = {}) {
     if (dash) {
       dash.reset();
       plex.stopTranscode(session);
@@ -113,14 +120,25 @@ export async function renderPlayer(main, { id, params }) {
     }
     loading.hidden = false;
     message.hidden = true;
-    const url = plex.manifestUrl(item.ratingKey, session, { burn, quality: prefs.quality });
-    dash = dashjs.MediaPlayer().create();
+    const opts = { burn, quality: prefs.quality };
+    const url = plex.manifestUrl(item.ratingKey, session, opts);
+    const player = dashjs.MediaPlayer().create();
+    dash = player;
     dash.updateSettings({
       debug: { logLevel: dashjs.Debug.LOG_LEVEL_WARNING },
       streaming: { buffer: { bufferTimeAtTopQuality: 30, bufferToKeep: 30 }, abr: { autoSwitchBitrate: { video: false } } },
     });
     dash.on(dashjs.MediaPlayer.events.ERROR, (e) => {
+      if (player !== dash) return;
       const code = e?.error?.code;
+      if (DOWNLOAD_ERRORS.has(code) && Date.now() - lastRestart > 60000) {
+        lastRestart = Date.now();
+        console.warn(`dash error ${code}: starting a new transcode at ${video.currentTime.toFixed(1)} s`);
+        const at = video.currentTime;
+        const wasPaused = video.paused;
+        setTimeout(() => player === dash && start(at, { paused: wasPaused }));
+        return;
+      }
       // dash.js puts the request URL, which carries the Plex token, into the message. Keep only the text before it.
       const detail = String(e?.error?.message || '').split(/\s*https?:\/\//)[0].trim();
       console.error(`dash error ${code}: ${detail}`);
@@ -130,9 +148,10 @@ export async function renderPlayer(main, { id, params }) {
       );
     });
     window.marquee.setActiveStream(plex.streamEndUrls(item, (atSec || 0) * 1000, session));
-    dash.initialize(video, atSec > 1 ? `${url}#t=${Math.floor(atSec)}` : url, true);
+    // Ask for the decision on this session first, as Plex Web does. Without it, Plex can refuse
+    // start.mpd with HTTP 400 ("session lacking decision"), for example right after a restart.
     plex
-      .decision(item.ratingKey, uuid(), { burn, quality: prefs.quality })
+      .decision(item.ratingKey, session, opts)
       .then((d) => {
         const s = d.Metadata?.[0]?.Media?.[0]?.Part?.[0]?.Stream || [];
         decisionText = s
@@ -140,7 +159,10 @@ export async function renderPlayer(main, { id, params }) {
           .map((x) => `${x.streamType === 1 ? 'Video' : 'Audio'}: ${x.decision === 'copy' ? 'copied' : 'converted'} as ${x.codec.toUpperCase()}${x.channels ? ` ${x.channels} ch` : ''}`)
           .join('\n');
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => {
+        if (player === dash) player.initialize(video, atSec > 1 ? `${url}#t=${Math.floor(atSec)}` : url, !paused);
+      });
   }
 
   function showMessage(title, detail) {
@@ -451,7 +473,12 @@ export async function renderPlayer(main, { id, params }) {
     plex.timeline(item, st, video.currentTime * 1000, session);
     window.marquee.setActiveStream(st === 'stopped' ? null : plex.streamEndUrls(item, video.currentTime * 1000, session));
   }
-  const heartbeat = setInterval(() => !video.paused && report('playing'), 10000);
+  // While paused, report the pause and ping the transcode, as Plex Web does, so Plex keeps it.
+  const heartbeat = setInterval(() => {
+    if (!video.paused) return report('playing');
+    report('paused');
+    plex.pingTranscode(session);
+  }, 10000);
 
   // ---------- picture-in-picture ----------
   // inPip: the video shows in the PiP window. parked: the user has left this page, and the app keeps
@@ -575,6 +602,7 @@ export async function renderPlayer(main, { id, params }) {
     report('stopped');
     plex.stopTranscode(session);
     dash?.reset();
+    dash = null;
     removeTextTrack();
     bif?.dispose();
     window.marquee.fullscreen(false);

@@ -150,6 +150,10 @@ export class Plex {
   stopTranscode(session) {
     return this.get('/video/:/transcode/universal/stop', { session }).catch(() => {});
   }
+  // Keeps a paused transcode alive. Plex ends one after 180 seconds without requests.
+  pingTranscode(session) {
+    return this.get('/video/:/transcode/universal/ping', { session }).catch(() => {});
+  }
   selectStreams(partId, { audioStreamID, subtitleStreamID }) {
     return this.put(`/library/parts/${partId}`, { audioStreamID, subtitleStreamID, allParts: 1 });
   }
