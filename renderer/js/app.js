@@ -70,7 +70,7 @@ export function defaultPrefs(sections, hubs) {
     rows.push({ id: 'custom-toprated', type: 'filter', title: 'Highly rated, not yet watched', section: movies.key, sort: 'audienceRating:desc', unwatched: true, visible: true });
     rows.push({ id: 'custom-random', type: 'filter', title: 'Something different tonight', section: movies.key, sort: 'random', unwatched: true, visible: true });
   }
-  return { themeMusic: true, autoplayNext: true, ambientOnHover: true, quality: 'original', featured: structuredClone(DEFAULT_FEATURED), rows };
+  return { themeMusic: true, autoplayNext: true, fullscreenPlayer: false, ambientOnHover: true, quality: 'original', featured: structuredClone(DEFAULT_FEATURED), rows };
 }
 
 const ROUTES = [

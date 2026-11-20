@@ -12,6 +12,9 @@ const TEXT_SUBS = new Set(['srt', 'subrip', 'ass', 'ssa', 'webvtt', 'vtt', 'text
 // The app shows a subtitle itself only when it's a separate text file that Plex can send whole.
 // Plex can't send embedded tracks on their own, so for those it draws the subtitle into the video.
 const shownByApp = (s) => !!s?.key && TEXT_SUBS.has(s.codec);
+// Set when the previous or next episode replaces a full-screen player, so the window stays in full
+// screen across the change instead of leaving and entering it again.
+let carryFullscreen = false;
 
 export async function renderPlayer(main, { id, params }) {
   const { plex, prefs } = state;
@@ -216,7 +219,16 @@ export async function renderPlayer(main, { id, params }) {
   fullBtn.onclick = () => window.marquee.fullscreen();
   pipBtn.onclick = () => togglePip();
   pipEdge.onclick = () => togglePip();
-  const offFullscreen = window.marquee.onFullscreen((on) => fullBtn.replaceChildren(svg(on ? 'exitfull' : 'full', 20)));
+  let isFull = carryFullscreen;
+  const offFullscreen = window.marquee.onFullscreen((on) => {
+    isFull = on;
+    fullBtn.replaceChildren(svg(on ? 'exitfull' : 'full', 20));
+  });
+  // Start in full screen when the setting asks for it, or keep it from the episode before. A player
+  // started behind another page or in picture-in-picture leaves the window alone.
+  if (carryFullscreen) fullBtn.replaceChildren(svg('exitfull', 20));
+  else if (prefs.fullscreenPlayer && !params.get('bg') && !params.get('pip')) window.marquee.fullscreen(true);
+  carryFullscreen = false;
   tracksBtn.onclick = () => {
     stats.hidden = true;
     panel.hidden = !panel.hidden;
@@ -376,6 +388,7 @@ export async function renderPlayer(main, { id, params }) {
     if (parked) playInBackground(ep.ratingKey);
     else {
       if (inPip) pip.hold();
+      else carryFullscreen = isFull;
       location.replace(`#/play/${ep.ratingKey}${inPip ? '?pip=1' : ''}`);
     }
   }
@@ -633,7 +646,7 @@ export async function renderPlayer(main, { id, params }) {
     dash = null;
     removeTextTrack();
     bif?.dispose();
-    window.marquee.fullscreen(false);
+    if (!carryFullscreen) window.marquee.fullscreen(false);
   };
   // The router keeps a player in picture-in-picture alive when the user goes to another page.
   cleanup.keepAlive = () => inPip;

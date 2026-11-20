@@ -102,6 +102,7 @@ export async function renderSettings(main) {
             quality,
           ),
           toggle('autoplayNext', 'Play the next episode', 'Counts down at the credits, then starts the next episode.'),
+          toggle('fullscreenPlayer', 'Play in full screen', 'The player opens in full screen and leaves it when you stop or go back. Esc or F leaves it at any time.'),
           toggle('themeMusic', 'Theme music', 'Plays a show or movie theme quietly on its page.'),
         ),
         h(

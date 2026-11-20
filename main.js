@@ -27,6 +27,9 @@ const dataDir = () => app.getPath('userData');
 const settingsFile = () => path.join(dataDir(), 'settings.json');
 const secretFile = () => path.join(dataDir(), 'credentials.bin');
 
+// Window buttons drawn over the app's own top bar (see the full-screen handlers in createWindow).
+const TITLE_BAR = { color: '#00000000', symbolColor: '#f2f4f8', height: 44 };
+
 function readSettings() {
   try {
     return JSON.parse(fs.readFileSync(settingsFile(), 'utf8'));
@@ -166,7 +169,7 @@ function createWindow() {
     title: 'Marquee',
     icon: path.join(ROOT, 'build', 'icon.png'),
     titleBarStyle: 'hidden',
-    titleBarOverlay: { color: '#00000000', symbolColor: '#f2f4f8', height: 44 },
+    titleBarOverlay: TITLE_BAR,
     webPreferences: { preload: path.join(ROOT, 'preload.js'), contextIsolation: true, sandbox: true, backgroundThrottling: !SHOT },
   });
   win.setMenuBarVisibility(false);
@@ -188,8 +191,16 @@ function createWindow() {
     e.preventDefault();
     endActiveStream().finally(() => win.destroy());
   });
-  win.on('enter-full-screen', () => win.webContents.send('fullscreen', true));
-  win.on('leave-full-screen', () => win.webContents.send('fullscreen', false));
+  // Windows keeps the minimize, maximize, and close buttons over a full-screen window. Shrink the
+  // overlay to nothing (Electron keeps 1 px) with clear symbols while in full screen, and restore it after.
+  win.on('enter-full-screen', () => {
+    win.setTitleBarOverlay({ color: '#00000000', symbolColor: '#00000000', height: 0 });
+    win.webContents.send('fullscreen', true);
+  });
+  win.on('leave-full-screen', () => {
+    win.setTitleBarOverlay(TITLE_BAR);
+    win.webContents.send('fullscreen', false);
+  });
   if (DEV) win.webContents.openDevTools({ mode: 'detach' });
   if (SHOT) {
     win.webContents.on('console-message', ({ level, message }) => {
