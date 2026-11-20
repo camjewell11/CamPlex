@@ -89,11 +89,12 @@ let navEl, mainEl;
 // A player in picture-in-picture keeps playing when the user goes to another page. The router
 // moves its elements into a hidden host (a <video> removed from the page would pause) and keeps
 // its cleanup here until the user returns to it, closes the PiP window, or plays something else.
+// A player in mini mode shows in this host, docked in the corner (see .bg-player in styles.css).
 let parked = null;
 let bgHost = null;
 const host = () => {
   if (!bgHost) {
-    bgHost = h('div', { class: 'bg-player', 'aria-hidden': 'true' });
+    bgHost = h('div', { class: 'bg-player' });
     document.body.append(bgHost);
   }
   return bgHost;
@@ -116,12 +117,12 @@ export function endBackground() {
   c.root.remove();
 }
 
-// Plays the next episode in the PiP window while the user stays on another page.
-export async function playInBackground(id) {
+// Plays the next episode in the PiP window or the mini player while the user stays on another page.
+export async function playInBackground(id, mode = 'pip') {
   pip.hold();
   endBackground();
   try {
-    const c = await renderPlayer(host(), { id, params: new URLSearchParams('pip=1&bg=1') });
+    const c = await renderPlayer(host(), { id, params: new URLSearchParams(`${mode}=1&bg=1`) });
     if (!c.keepAlive()) {
       runCleanup(c);
       c.root.remove();
@@ -209,10 +210,62 @@ function buildNav() {
       h('a', { href: '#/home', 'data-route': '#/home' }, 'Home'),
       links,
       h('label', { class: 'search' }, svg('search', 16), input),
+      fullBtn,
       h('a', { class: 'iconlink', href: '#/settings', 'data-route': '#/settings', 'aria-label': 'Settings', title: 'Settings' }, svg('settings', 18)),
     ),
   );
   return navEl;
+}
+
+// Full screen for the whole app, like macOS: the window buttons and the navigation bar hide, and the
+// bar slides back while the pointer is at the top edge or a control in it has focus.
+const fullBtn = h(
+  'a',
+  {
+    class: 'iconlink',
+    href: '#',
+    role: 'button',
+    'aria-label': 'Full screen',
+    title: 'Full screen (F11)',
+    onClick: (e) => {
+      e.preventDefault();
+      window.marquee.fullscreen();
+    },
+  },
+  svg('full', 18),
+);
+function setupFullscreen() {
+  const body = document.body;
+  const bar = navEl.querySelector('.navbar');
+  let hideTimer = null;
+  const show = () => {
+    clearTimeout(hideTimer);
+    body.classList.add('nav-reveal');
+  };
+  const hideSoon = () => {
+    clearTimeout(hideTimer);
+    hideTimer = setTimeout(() => {
+      if (bar.matches(':hover') || bar.contains(document.activeElement)) return;
+      body.classList.remove('nav-reveal');
+    }, 500);
+  };
+  window.marquee.onFullscreen((on) => {
+    body.classList.toggle('fullscreen', on);
+    body.classList.remove('nav-reveal');
+    fullBtn.replaceChildren(svg(on ? 'exitfull' : 'full', 18));
+    fullBtn.title = on ? 'Exit full screen (F11)' : 'Full screen (F11)';
+    fullBtn.setAttribute('aria-label', on ? 'Exit full screen' : 'Full screen');
+  });
+  document.addEventListener('mousemove', (e) => {
+    if (!body.classList.contains('fullscreen')) return;
+    if (e.clientY <= 4) show();
+    else if (body.classList.contains('nav-reveal')) {
+      if (e.clientY > bar.getBoundingClientRect().bottom + 24) hideSoon();
+      else clearTimeout(hideTimer);
+    }
+  });
+  navEl.addEventListener('focusin', () => body.classList.contains('fullscreen') && show());
+  navEl.addEventListener('focusout', hideSoon);
 }
 function updateNav(hashPath) {
   navEl?.querySelectorAll('[data-route]').forEach((a) => a.classList.toggle('active', a.dataset.route === hashPath));
@@ -254,6 +307,7 @@ async function boot() {
   }
   mainEl = h('main', { class: 'main', id: 'main' });
   app.replaceChildren(buildNav(), mainEl);
+  setupFullscreen();
   window.addEventListener('hashchange', route);
   if (!location.hash) location.hash = '#/home';
   else route();

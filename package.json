@@ -1,6 +1,6 @@
 {
   "name": "marquee",
-  "version": "0.2.7",
+  "version": "0.2.8",
   "description": "A glass-and-blur desktop client for a personal Plex server.",
   "main": "main.js",
   "private": true,

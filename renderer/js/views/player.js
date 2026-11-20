@@ -46,7 +46,7 @@ export async function renderPlayer(main, { id, params }) {
         }, nameText)
       : h('strong', {}, nameText);
   const titleText = [name, item.type === 'episode' ? h('span', {}, `${episodeCode(item)} ${item.title}`) : item.year ? h('span', {}, String(item.year)) : null];
-  const backBtn = h('button', { class: 'ctl glass', 'aria-label': 'Back', title: 'Back (Esc)', onclick: () => leave() }, svg('arrowLeft', 20));
+  const backBtn = h('button', { class: 'ctl glass', 'aria-label': 'Back', title: 'Back (Esc)', onclick: () => back() }, svg('arrowLeft', 20));
   const top = h('div', { class: 'p-top' }, backBtn, h('div', { class: 'p-title' }, titleText));
 
   const playBtn = h('button', { class: 'ctl big', 'aria-label': 'Play or pause', title: 'Play or pause (Space)' }, svg('pause', 26));
@@ -108,7 +108,26 @@ export async function renderPlayer(main, { id, params }) {
   const flash = h('div', { class: 'p-flash' });
   const message = h('div', { class: 'p-message glass', hidden: true });
   const loading = h('div', { class: 'p-loading' }, h('span'));
-  const root = h('div', { class: 'player' }, video, pipNote, loading, flash, top, pipEdge, skipBtn, upNext, panel, stats, message, bar);
+  // Mini player: after Back, the video keeps playing docked in the corner of the window while the
+  // user browses, as in Plex. Clicking the video brings the full player back.
+  let inMini = false;
+  const miniPlay = h('button', { class: 'ctl', 'aria-label': 'Play or pause', title: 'Play or pause' }, svg('pause', 22));
+  const miniProg = h('div', { class: 'm-prog' }, h('span'));
+  const mini = h(
+    'div',
+    { class: 'p-mini', onclick: (e) => e.target === mini && expandMini() },
+    h('button', { class: 'ctl m-close', 'aria-label': 'Close', title: 'Stop and close', onclick: () => closeMini() }, svg('close', 18)),
+    h(
+      'div',
+      { class: 'm-buttons' },
+      h('button', { class: 'ctl', 'aria-label': 'Expand', title: 'Back to the full player', onclick: () => expandMini() }, svg('full', 20)),
+      miniPlay,
+      h('button', { class: 'ctl', 'aria-label': 'Picture-in-picture', title: 'Picture-in-picture', onclick: () => popOutMini() }, svg('pip', 20)),
+    ),
+    h('div', { class: 'm-title' }, nameText),
+    miniProg,
+  );
+  const root = h('div', { class: 'player' }, video, pipNote, loading, flash, top, pipEdge, skipBtn, upNext, panel, stats, message, bar, mini);
   main.append(root);
 
   // ---------- stream ----------
@@ -219,14 +238,16 @@ export async function renderPlayer(main, { id, params }) {
   fullBtn.onclick = () => window.marquee.fullscreen();
   pipBtn.onclick = () => togglePip();
   pipEdge.onclick = () => togglePip();
-  let isFull = carryFullscreen;
+  // A window already in app-wide full screen stays that way when playback ends.
+  const startedFull = document.body.classList.contains('fullscreen') && !carryFullscreen;
+  let isFull = carryFullscreen || startedFull;
   const offFullscreen = window.marquee.onFullscreen((on) => {
     isFull = on;
     fullBtn.replaceChildren(svg(on ? 'exitfull' : 'full', 20));
   });
   // Start in full screen when the setting asks for it, or keep it from the episode before. A player
   // started behind another page or in picture-in-picture leaves the window alone.
-  if (carryFullscreen) fullBtn.replaceChildren(svg('exitfull', 20));
+  if (isFull) fullBtn.replaceChildren(svg('exitfull', 20));
   else if (prefs.fullscreenPlayer && !params.get('bg') && !params.get('pip')) window.marquee.fullscreen(true);
   carryFullscreen = false;
   tracksBtn.onclick = () => {
@@ -241,11 +262,13 @@ export async function renderPlayer(main, { id, params }) {
 
   video.addEventListener('play', () => {
     playBtn.replaceChildren(svg('pause', 26));
+    miniPlay.replaceChildren(svg('pause', 22));
     report('playing');
     pulse('play');
   });
   video.addEventListener('pause', () => {
     playBtn.replaceChildren(svg('play', 26));
+    miniPlay.replaceChildren(svg('play', 22));
     report('paused');
     pulse('pause');
     poke();
@@ -322,6 +345,7 @@ export async function renderPlayer(main, { id, params }) {
     const t = video.currentTime;
     if (!dragging) played.style.width = `${total ? (t / total) * 100 : 0}%`;
     knob.style.left = played.style.width;
+    if (inMini) miniProg.firstChild.style.width = `${total ? (t / total) * 100 : 0}%`;
     timeEl.textContent = `${clock(t)} / ${clock(total)}`;
     scrub.setAttribute('aria-valuenow', Math.round(t));
     if (video.buffered.length) buffered.style.width = `${(video.buffered.end(video.buffered.length - 1) / total) * 100}%`;
@@ -385,7 +409,7 @@ export async function renderPlayer(main, { id, params }) {
   // to another page, it starts there without leaving that page.
   function goTo(ep) {
     clearInterval(countdown);
-    if (parked) playInBackground(ep.ratingKey);
+    if (parked) playInBackground(ep.ratingKey, inMini ? 'mini' : 'pip');
     else {
       if (inPip) pip.hold();
       else carryFullscreen = isFull;
@@ -567,6 +591,46 @@ export async function renderPlayer(main, { id, params }) {
     if (inPip) returnFromPip();
     else enterPip();
   }
+
+  // ---------- mini player ----------
+  // Trailers and clips have no details page to browse, so Back ends them as before.
+  const canMini = item.type === 'episode' || item.type === 'movie';
+  function setMini(on) {
+    inMini = on;
+    root.classList.toggle('mini', on);
+    if (on) {
+      panel.hidden = true;
+      stats.hidden = true;
+      upNext.hidden = true;
+      tick();
+    }
+  }
+  // Back: dock the video in the corner and go to the page before. A full screen that the player
+  // started ends here; one the user turned on for the whole app stays.
+  function toMini() {
+    if (isFull && !startedFull) window.marquee.fullscreen(false);
+    setMini(true);
+    leave();
+  }
+  function back() {
+    if (canMini && !inPip && message.hidden) toMini();
+    else leave();
+  }
+  function expandMini() {
+    location.hash = `#/play/${item.ratingKey}`;
+  }
+  function closeMini() {
+    video.pause();
+    setMini(false);
+    endBackground();
+  }
+  // From the mini player to the floating window. The player stays parked out of sight.
+  function popOutMini() {
+    setMini(false);
+    enterPip();
+    if (!inPip) setMini(true);
+  }
+  if (params.get('mini')) setMini(true);
   // The previous episode was in picture-in-picture, so this one continues there.
   if (params.get('pip') && pip.isOpen() && pip.attach(pipSource)) setPip(true);
 
@@ -614,7 +678,7 @@ export async function renderPlayer(main, { id, params }) {
           panel.hidden = true;
           stats.hidden = true;
         } else if (document.fullscreenElement || window.innerHeight === screen.height) window.marquee.fullscreen(false);
-        else leave();
+        else back();
       },
     }[k];
     if (handled) {
@@ -646,13 +710,17 @@ export async function renderPlayer(main, { id, params }) {
     dash = null;
     removeTextTrack();
     bif?.dispose();
-    if (!carryFullscreen) window.marquee.fullscreen(false);
+    // A parked player (mini or picture-in-picture) no longer owns the window's full screen.
+    if (!carryFullscreen && !startedFull && !parked) window.marquee.fullscreen(false);
   };
   // The router keeps a player in picture-in-picture alive when the user goes to another page.
-  cleanup.keepAlive = () => inPip;
+  cleanup.keepAlive = () => inPip || inMini;
   cleanup.park = (on) => {
     parked = on;
-    if (!on) poke();
+    if (!on) {
+      setMini(false);
+      poke();
+    }
   };
   cleanup.ratingKey = String(item.ratingKey);
   cleanup.root = root;

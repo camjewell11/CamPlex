@@ -201,6 +201,13 @@ function createWindow() {
     win.setTitleBarOverlay(TITLE_BAR);
     win.webContents.send('fullscreen', false);
   });
+  // F11 puts the whole app in full screen from any page, even while a text box has focus.
+  win.webContents.on('before-input-event', (e, input) => {
+    if (input.type === 'keyDown' && input.key === 'F11' && !input.alt && !input.control && !input.meta) {
+      e.preventDefault();
+      win.setFullScreen(!win.isFullScreen());
+    }
+  });
   if (DEV) win.webContents.openDevTools({ mode: 'detach' });
   if (SHOT) {
     win.webContents.on('console-message', ({ level, message }) => {

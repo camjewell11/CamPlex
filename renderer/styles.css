@@ -209,6 +209,14 @@ input[type='checkbox'] { accent-color: var(--accent); width: 18px; height: 18px;
 .iconlink { display: grid !important; place-items: center; width: 36px; height: 36px; padding: 0 !important; }
 
 body.playing .topnav { display: none; }
+/* App-wide full screen: no window buttons to clear, and the bar waits above the top edge. */
+body.fullscreen .topnav {
+  padding-right: var(--gutter);
+  -webkit-app-region: no-drag;
+  transform: translateY(-100%);
+  transition: transform 0.25s ease;
+}
+body.fullscreen.nav-reveal .topnav { transform: none; }
 
 .main { min-height: 100vh; padding-bottom: 80px; }
 
@@ -736,6 +744,35 @@ body.playing .topnav { display: none; }
 .player.in-pip .p-top, .player.in-pip .p-bar { opacity: 1; transform: none; pointer-events: auto; }
 /* A player in PiP whose page the user has left keeps running here, out of sight. */
 .bg-player { position: fixed; left: 0; top: 0; width: 1px; height: 1px; overflow: hidden; opacity: 0; pointer-events: none; contain: strict; }
+/* A player in mini mode docks in the lower-right corner over whatever page is open. contain keeps
+   the player's position: fixed inside this box. */
+.bg-player:has(> .player.mini) {
+  left: auto;
+  top: auto;
+  right: 24px;
+  bottom: 24px;
+  width: clamp(280px, 28vw, 440px);
+  height: auto;
+  aspect-ratio: 16 / 9;
+  z-index: 150;
+  opacity: 1;
+  pointer-events: auto;
+  border-radius: 16px;
+  border: 1px solid var(--edge);
+  box-shadow: 0 24px 60px -20px rgb(0 0 0 / 0.9);
+}
+.p-mini { display: none; }
+.player.mini { cursor: auto !important; }
+.player.mini > :not(.player-video, .p-loading, .p-mini) { display: none !important; }
+.player.mini .p-mini { display: block; position: absolute; inset: 0; cursor: pointer; background: transparent; transition: background 0.2s; }
+.player.mini .p-mini > :not(.m-prog) { opacity: 0; transition: opacity 0.2s; }
+.player.mini:hover .p-mini, .player.mini .p-mini:focus-within { background: rgb(0 0 0 / 0.45); }
+.player.mini:hover .p-mini > *, .player.mini .p-mini:focus-within > * { opacity: 1; }
+.m-buttons { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); display: flex; gap: 10px; }
+.m-close { position: absolute; top: 6px; right: 6px; }
+.m-title { position: absolute; left: 12px; right: 12px; bottom: 10px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; }
+.m-prog { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: rgb(255 255 255 / 0.18); pointer-events: none; }
+.m-prog span { display: block; height: 100%; width: 0; background: var(--accent); }
 
 /* ---------- smaller windows ---------- */
 @media (max-width: 1180px) {
