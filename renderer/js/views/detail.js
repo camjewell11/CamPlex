@@ -26,7 +26,7 @@ export async function renderDetail(main, { id, params }) {
   const top = h('section', { class: 'detail-top' }, plate(item, show, audio), item.Media ? fileInfo(item) : showInfo(item));
   page.append(top);
 
-  if (item.type === 'show') page.append(await seasonsBlock(item, Number(params.get('season')) || null));
+  if (item.type === 'show') page.append(await seasonsBlock(item, Number(params.get('season')) || null, params.get('episode')));
   if (item.type === 'episode') page.append(h('a', { class: 'button glass back-to-show', href: `#/item/${show.ratingKey}?season=${item.parentIndex}` }, svg('arrowLeft', 16), `All episodes of ${show.title}`));
 
   const cast = (item.Role || show?.Role || []).slice(0, 24);
@@ -163,7 +163,7 @@ async function loadHistory(item, el) {
   }
 }
 
-async function seasonsBlock(show, wanted) {
+async function seasonsBlock(show, wanted, focusKey) {
   const { plex } = state;
   const seasons = (await plex.children(show.ratingKey)).sort((a, b) => (a.index || 0) - (b.index || 0));
   const regular = seasons.filter((s) => s.index > 0);
@@ -178,6 +178,13 @@ async function seasonsBlock(show, wanted) {
     const eps = await plex.children(season.ratingKey);
     list.replaceChildren(...eps.map(episodeRow));
     history.replaceState(null, '', `#/item/${show.ratingKey}?season=${season.index}`);
+    // A card's picture links here with the episode it shows; bring that episode into view.
+    const focus = focusKey && list.querySelector(`[data-key="${CSS.escape(String(focusKey))}"]`);
+    focusKey = null;
+    if (focus) {
+      focus.classList.add('focus');
+      requestAnimationFrame(() => focus.scrollIntoView({ block: 'center', behavior: 'smooth' }));
+    }
   }
   for (const s of seasons) {
     tabs.append(h('button', { role: 'tab', 'data-key': s.ratingKey, onclick: () => select(s) }, s.index === 0 ? 'Specials' : `Season ${s.index}`));
@@ -189,9 +196,15 @@ async function seasonsBlock(show, wanted) {
 function episodeRow(ep) {
   const { plex } = state;
   const pct = ep.viewOffset && ep.duration ? (ep.viewOffset / ep.duration) * 100 : 0;
+  // The row plays the episode; its number and the info button open the episode's page.
+  const openDetails = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    location.hash = `#/item/${ep.ratingKey}`;
+  };
   return h(
     'a',
-    { class: `episode ${ep.viewCount ? 'seen' : ''}`, href: `#/play/${ep.ratingKey}${ep.viewOffset ? '?resume=1' : ''}` },
+    { class: `episode ${ep.viewCount ? 'seen' : ''}`, href: `#/play/${ep.ratingKey}${ep.viewOffset ? '?resume=1' : ''}`, 'data-key': ep.ratingKey },
     h(
       'div',
       { class: 'thumb' },
@@ -202,7 +215,7 @@ function episodeRow(ep) {
     h(
       'div',
       { class: 'ep-text' },
-      h('h3', {}, h('span', { class: 'num' }, String(ep.index)), ep.title, ep.viewCount ? h('span', { class: 'seen-mark', title: 'Watched' }, svg('check', 14)) : null),
+      h('h3', {}, h('span', { class: 'num', role: 'link', tabindex: 0, title: `Details for episode ${ep.index}`, onclick: openDetails, onkeydown: (e) => e.key === 'Enter' && openDetails(e) }, String(ep.index)), ep.title, ep.viewCount ? h('span', { class: 'seen-mark', title: 'Watched' }, svg('check', 14)) : null),
       h('div', { class: 'facts small' }, h('span', {}, duration(ep.duration)), ep.originallyAvailableAt ? h('span', {}, dateText(Date.parse(ep.originallyAvailableAt) / 1000)) : null),
       ep.summary ? h('p', {}, ep.summary) : null,
     ),
@@ -212,11 +225,7 @@ function episodeRow(ep) {
         class: 'ep-more',
         'aria-label': `Details for ${ep.title}`,
         title: 'Details',
-        onclick: (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          location.hash = `#/item/${ep.ratingKey}`;
-        },
+        onclick: openDetails,
       },
       svg('info', 18),
     ),

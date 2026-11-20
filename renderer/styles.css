@@ -346,8 +346,16 @@ body.playing .topnav { display: none; }
 .card:focus-visible { outline: none; }
 .card:focus-visible .art { outline: 2px solid var(--accent); outline-offset: 3px; }
 .card.split a.art:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
-.card.split .caption a.name { justify-self: start; max-width: 100%; }
-.card.split .caption a.name:hover { text-decoration: underline; text-underline-offset: 3px; }
+.card.split .caption a.name, .card.split .caption a.sub { justify-self: start; max-width: 100%; }
+.card.split .caption a.name:hover, .card.split .caption a.sub:hover { text-decoration: underline; text-underline-offset: 3px; }
+.card.split .caption a.sub:hover { color: var(--ink-2); }
+/* The picture opens the page; the play button over its middle starts playback. */
+.art-hold { position: relative; }
+.art-hold > a.art { display: block; }
+.art-hold:focus-within .playhint { opacity: 1; transform: none; }
+.art-hold > .playhint { z-index: 1; color: var(--ink); }
+.art-hold > .playhint:hover { background: var(--ink); color: #0b0d14; transform: scale(1.08); }
+.art-hold > .playhint:focus-visible { opacity: 1; transform: none; outline: 2px solid var(--accent); outline-offset: 2px; }
 .caption { display: grid; gap: 1px; padding: 0 2px; min-width: 0; }
 .caption .name, .caption .sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .caption .name { font-weight: 600; font-size: 14px; }
@@ -485,7 +493,9 @@ body.playing .topnav { display: none; }
 .episode.seen .thumb img { opacity: 0.6; }
 .ep-text { display: grid; gap: 6px; min-width: 0; }
 .ep-text h3 { font-size: 18px; display: flex; align-items: baseline; gap: 10px; font-stretch: 90%; }
-.ep-text .num { color: var(--ink-3); font-weight: 600; min-width: 1.6em; }
+.ep-text .num { color: var(--ink-3); font-weight: 600; min-width: 1.6em; cursor: pointer; border-radius: 6px; }
+.ep-text .num:hover, .ep-text .num:focus-visible { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; outline: none; }
+.episode.focus { border-color: color-mix(in srgb, var(--accent) 60%, transparent); background: var(--glass); }
 .ep-text p { color: var(--ink-2); font-size: 14px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .seen-mark { color: var(--accent); }
 .ep-more { width: 40px; height: 40px; border-radius: 50%; border: 0; background: transparent; color: var(--ink-3); cursor: pointer; display: grid; place-items: center; }
@@ -564,8 +574,10 @@ body.playing .topnav { display: none; }
   display: grid;
   gap: 8px;
 }
-.p-buttons { display: flex; align-items: center; gap: 6px; }
-.p-buttons .spacer { flex: 1; }
+.p-buttons { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 12px; }
+.pb-side, .pb-center { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.pb-side.end { justify-content: flex-end; }
+.pb-center { gap: 10px; }
 .ctl.big { width: 52px; height: 52px; background: var(--ink); color: #0b0d14; }
 .ctl.big:hover { background: #fff; }
 .vol { width: 96px; accent-color: var(--ink); }

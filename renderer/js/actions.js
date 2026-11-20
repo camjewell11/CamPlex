@@ -45,3 +45,21 @@ export async function nextEpisode(ep) {
   }
   return null;
 }
+
+// Previous episode in watch order, crossing into the previous season when needed. Specials
+// (season 0) come before season 1 in Plex's order, so they're skipped here.
+export async function previousEpisode(ep) {
+  const { plex } = state;
+  if (ep.type !== 'episode') return null;
+  const eps = await plex.children(ep.parentRatingKey);
+  const i = eps.findIndex((e) => e.ratingKey === ep.ratingKey);
+  if (i > 0) return eps[i - 1];
+  const seasons = (await plex.children(ep.grandparentRatingKey)).sort((a, b) => a.index - b.index);
+  const si = seasons.findIndex((s) => s.ratingKey === ep.parentRatingKey);
+  for (const s of seasons.slice(0, Math.max(0, si)).reverse()) {
+    if (s.index === 0 && ep.parentIndex > 0) break;
+    const prev = await plex.children(s.ratingKey);
+    if (prev.length) return prev[prev.length - 1];
+  }
+  return null;
+}

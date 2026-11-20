@@ -2,7 +2,7 @@
 import { h, svg, clock, episodeCode, uuid } from '../util.js';
 import { state, savePrefs, playInBackground, endBackground } from '../app.js';
 import { QUALITY } from '../plex.js';
-import { nextEpisode } from '../actions.js';
+import { nextEpisode, previousEpisode } from '../actions.js';
 import { setAmbient, ambientOf } from '../ambient.js';
 import { pageHref } from '../components.js';
 import { loadBif } from '../bif.js';
@@ -49,6 +49,10 @@ export async function renderPlayer(main, { id, params }) {
   const playBtn = h('button', { class: 'ctl big', 'aria-label': 'Play or pause', title: 'Play or pause (Space)' }, svg('pause', 26));
   const backTen = h('button', { class: 'ctl', 'aria-label': 'Back 10 seconds', title: 'Back 10 seconds (Left arrow)' }, svg('back10', 22));
   const fwdTen = h('button', { class: 'ctl', 'aria-label': 'Forward 10 seconds', title: 'Forward 10 seconds (Right arrow)' }, svg('fwd10', 22));
+  const isEpisode = item.type === 'episode';
+  const prevBtn = isEpisode ? h('button', { class: 'ctl', 'aria-label': 'Previous episode', title: 'Previous episode (Shift+B)', disabled: true }, svg('prev', 20)) : null;
+  const nextBtn = isEpisode ? h('button', { class: 'ctl', 'aria-label': 'Next episode', title: 'Next episode (N)', disabled: true }, svg('next', 20)) : null;
+  const stopBtn = h('button', { class: 'ctl', 'aria-label': 'Stop', title: isEpisode ? 'Stop and open the episode details (X)' : 'Stop and open the details (X)' }, svg('stop', 18));
   const muteBtn = h('button', { class: 'ctl', 'aria-label': 'Mute', title: 'Mute (M)' }, svg('volume', 20));
   const vol = h('input', { class: 'vol', type: 'range', min: 0, max: 1, step: 0.02, value: Number(localStorage.getItem('volume') ?? 1), 'aria-label': 'Volume' });
   const timeEl = h('span', { class: 'time' }, `0:00 / ${clock(total)}`);
@@ -85,7 +89,14 @@ export async function renderPlayer(main, { id, params }) {
     'div',
     { class: 'p-bar glass' },
     scrub,
-    h('div', { class: 'p-buttons' }, backTen, playBtn, fwdTen, muteBtn, vol, timeEl, h('span', { class: 'spacer' }), tracksBtn, infoBtn, pipBtn, fullBtn),
+    // Three groups, so the transport buttons sit in the middle of the bar whatever the sides hold.
+    h(
+      'div',
+      { class: 'p-buttons' },
+      h('div', { class: 'pb-side' }, stopBtn, muteBtn, vol, timeEl),
+      h('div', { class: 'pb-center' }, prevBtn, backTen, playBtn, fwdTen, nextBtn),
+      h('div', { class: 'pb-side end' }, tracksBtn, infoBtn, pipBtn, fullBtn),
+    ),
   );
   const skipBtn = h('button', { class: 'skip glass', hidden: true });
   const panel = h('div', { class: 'p-panel glass', hidden: true });
@@ -190,6 +201,9 @@ export async function renderPlayer(main, { id, params }) {
   video.addEventListener('click', toggle);
   video.addEventListener('dblclick', () => window.marquee.fullscreen());
   backTen.onclick = () => seekTo(video.currentTime - 10);
+  stopBtn.onclick = () => stop();
+  if (prevBtn) prevBtn.onclick = () => prev && goTo(prev);
+  if (nextBtn) nextBtn.onclick = () => next && goNext();
   fwdTen.onclick = () => seekTo(video.currentTime + 10);
   muteBtn.onclick = () => {
     video.muted = !video.muted;
@@ -282,7 +296,12 @@ export async function renderPlayer(main, { id, params }) {
 
   // ---------- markers and up next ----------
   let next = null;
-  let nextLoaded = false;
+  let prev = null;
+  // Look up the neighbors now, so the previous and next buttons work from the start.
+  if (isEpisode) {
+    nextEpisode(item).then((n) => { next = n; nextBtn.disabled = !n; if (n) nextBtn.title = `Next episode: ${episodeCode(n)} ${n.title} (N)`; }).catch(() => {});
+    previousEpisode(item).then((p) => { prev = p; prevBtn.disabled = !p; if (p) prevBtn.title = `Previous episode: ${episodeCode(p)} ${p.title} (Shift+B)`; }).catch(() => {});
+  }
   let upNextDismissed = false;
   let countdown = null;
   const credits = markers.find((m) => m.type === 'credits' && m.final) || markers.filter((m) => m.type === 'credits').pop();
@@ -302,10 +321,6 @@ export async function renderPlayer(main, { id, params }) {
       skipBtn.hidden = false;
     } else skipBtn.hidden = true;
 
-    if (item.type === 'episode' && !nextLoaded && t > total - 300) {
-      nextLoaded = true;
-      nextEpisode(item).then((n) => (next = n)).catch(() => {});
-    }
     const creditsStart = credits ? credits.startTimeOffset / 1000 : total - 30;
     if (next && prefs.autoplayNext && !upNextDismissed && t >= creditsStart && upNext.hidden) showUpNext();
     if (stats.hidden === false) renderStats();
@@ -352,14 +367,25 @@ export async function renderPlayer(main, { id, params }) {
   }
   function goNext() {
     clearInterval(countdown);
-    if (!next) return;
-    // In picture-in-picture the next episode plays in the same window. When the user has moved on
-    // to another page, it starts there without leaving that page.
-    if (parked) playInBackground(next.ratingKey);
+    if (next) goTo(next);
+  }
+  // In picture-in-picture the other episode plays in the same window. When the user has moved on
+  // to another page, it starts there without leaving that page.
+  function goTo(ep) {
+    clearInterval(countdown);
+    if (parked) playInBackground(ep.ratingKey);
     else {
       if (inPip) pip.hold();
-      location.replace(`#/play/${next.ratingKey}${inPip ? '?pip=1' : ''}`);
+      location.replace(`#/play/${ep.ratingKey}${inPip ? '?pip=1' : ''}`);
     }
+  }
+  // Stop: end playback and show this episode's or movie's page in place of the player, so Back
+  // doesn't start it again. The route change stops the stream and saves the position.
+  function stop() {
+    video.pause();
+    if (inPip) returnFromPip();
+    if (item.type === 'episode' || item.type === 'movie') location.replace(`#/item/${item.ratingKey}`);
+    else leave();
   }
   async function onEnded() {
     report('stopped');
@@ -538,7 +564,7 @@ export async function renderPlayer(main, { id, params }) {
     clearTimeout(idle);
     idle = setTimeout(() => {
       if (!video.paused && panel.hidden && stats.hidden && !root.matches(':has(.p-bar:hover)')) root.classList.add('idle');
-    }, 2800);
+    }, 1500);
   }
   root.addEventListener('mousemove', poke);
   poke();
@@ -566,7 +592,9 @@ export async function renderPlayer(main, { id, params }) {
       c: () => tracksBtn.click(),
       i: () => infoBtn.click(),
       s: () => !skipBtn.hidden && skipBtn.click(),
-      n: () => next && goNext(),
+      n: () => (e.shiftKey ? null : next && goNext()),
+      b: () => (e.shiftKey && prev ? goTo(prev) : null),
+      x: () => stop(),
       p: () => togglePip(),
       escape: () => {
         if (!panel.hidden || !stats.hidden) {

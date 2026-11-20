@@ -28,6 +28,9 @@ export function svg(name, size = 20) {
 const ICONS = {
   play: '<path d="M7 4.5v15l12.5-7.5z" fill="currentColor"/>',
   pause: '<path d="M6.5 4.5h4v15h-4zM13.5 4.5h4v15h-4z" fill="currentColor"/>',
+  prev: '<path d="M5 5h2.5v14H5zm3.5 7L19 5v14z" fill="currentColor"/>',
+  next: '<path d="M16.5 5H19v14h-2.5zM5 5l10.5 7L5 19z" fill="currentColor"/>',
+  stop: '<path d="M6 6h12v12H6z" fill="currentColor"/>',
   back10: '<path d="M12 5V2L7 6l5 4V7a6 6 0 1 1-6 6H4a8 8 0 1 0 8-8z" fill="currentColor"/><text x="12" y="16.2" font-size="6.5" text-anchor="middle" fill="currentColor" font-family="sans-serif" font-weight="700">10</text>',
   fwd10: '<path d="M12 5V2l5 4-5 4V7a6 6 0 1 0 6 6h2a8 8 0 1 1-8-8z" fill="currentColor"/><text x="12" y="16.2" font-size="6.5" text-anchor="middle" fill="currentColor" font-family="sans-serif" font-weight="700">10</text>',
   volume: '<path d="M4 9v6h4l5 4V5L8 9zm11.5 3a4.5 4.5 0 0 0-2.5-4v8a4.5 4.5 0 0 0 2.5-4zM13 3.2v2.1a7 7 0 0 1 0 13.4v2.1a9 9 0 0 0 0-17.6z" fill="currentColor"/>',

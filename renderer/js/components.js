@@ -55,40 +55,53 @@ function subline(item) {
 }
 
 // The page for a title: an episode's show (on the episode's season), or the title itself.
-export function pageHref(item) {
+// With `episode`, the show page also scrolls to and highlights that episode.
+export function pageHref(item, { episode = false } = {}) {
   if (item.type !== 'episode') return `#/item/${item.ratingKey}`;
-  return `#/item/${item.grandparentRatingKey}${item.parentIndex != null ? `?season=${item.parentIndex}` : ''}`;
+  const q = new URLSearchParams();
+  if (item.parentIndex != null) q.set('season', item.parentIndex);
+  if (episode) q.set('episode', item.ratingKey);
+  const qs = q.toString();
+  return `#/item/${item.grandparentRatingKey}${qs ? `?${qs}` : ''}`;
 }
 
-// 16:9 card for continue watching, episodes, and extras. Selecting the picture starts playback.
-// For movies and episodes, the name under the picture opens the movie or the show.
+// 16:9 card for continue watching, episodes, and extras. For movies and episodes, the picture
+// opens the page (the show at the episode's season, or the movie), the play button in its middle
+// starts playback, the name opens the show or movie, and the episode line opens the episode.
 export function landscapeCard(item, { playable = true, label } = {}) {
   const { plex } = state;
   const img = item.type === 'episode' || item.type === 'clip' ? item.thumb : item.art || item.thumb;
   const title = item.type === 'episode' ? item.grandparentTitle : item.title;
   const sub = label || (item.type === 'episode' ? `${episodeCode(item)} ${item.title}` : item.year ? String(item.year) : '');
-  const art = (tag, attrs) =>
-    h(
-      tag,
-      { class: 'art', ...attrs },
-      img ? h('img', { src: plex.img(img, 560, 315), alt: '', loading: 'lazy', decoding: 'async' }) : h('div', { class: 'noart' }, title),
-      playable ? h('span', { class: 'playhint glass' }, svg('play', 18)) : null,
-      progressBar(item),
-    );
+  const playHref = `#/play/${item.ratingKey}${item.viewOffset ? '?resume=1' : ''}`;
+  const picture = () => (img ? h('img', { src: plex.img(img, 560, 315), alt: '', loading: 'lazy', decoding: 'async' }) : h('div', { class: 'noart' }, title));
   if (!playable || (item.type !== 'episode' && item.type !== 'movie')) {
-    const href = playable ? `#/play/${item.ratingKey}${item.viewOffset ? '?resume=1' : ''}` : `#/item/${item.ratingKey}`;
-    return h('a', { class: 'card wide', href, ...focusHandlers(item) }, art('div'), h('div', { class: 'caption' }, h('span', { class: 'name' }, title), h('span', { class: 'sub' }, sub)));
+    const href = playable ? playHref : `#/item/${item.ratingKey}`;
+    return h(
+      'a',
+      { class: 'card wide', href, ...focusHandlers(item) },
+      h('div', { class: 'art' }, picture(), playable ? h('span', { class: 'playhint glass' }, svg('play', 18)) : null, progressBar(item)),
+      h('div', { class: 'caption' }, h('span', { class: 'name' }, title), h('span', { class: 'sub' }, sub)),
+    );
   }
   const fn = () => hoverAmbient(item);
+  const page = pageHref(item, { episode: true });
   return h(
     'div',
     { class: 'card wide split', onmouseenter: fn, onfocusin: fn },
-    art('a', { href: `#/play/${item.ratingKey}${item.viewOffset ? '?resume=1' : ''}`, 'aria-label': `${item.viewOffset ? 'Resume' : 'Play'} ${title}${sub ? `, ${sub}` : ''}` }),
+    h(
+      'div',
+      { class: 'art-hold' },
+      h('a', { class: 'art', href: page, 'aria-label': item.type === 'episode' ? `Open ${title}, season ${item.parentIndex}` : `Open ${title} details` }, picture(), progressBar(item)),
+      h('a', { class: 'playhint glass', href: playHref, 'aria-label': `${item.viewOffset ? 'Resume' : 'Play'} ${title}${sub ? `, ${sub}` : ''}`, title: item.viewOffset ? 'Resume' : 'Play' }, svg('play', 18)),
+    ),
     h(
       'div',
       { class: 'caption' },
       h('a', { class: 'name', href: pageHref(item), title: item.type === 'episode' ? `Open ${title}` : `Open ${title} details` }, title),
-      h('span', { class: 'sub' }, sub),
+      item.type === 'episode'
+        ? h('a', { class: 'sub', href: `#/item/${item.ratingKey}`, title: `Details for ${episodeCode(item)} ${item.title}` }, sub)
+        : h('span', { class: 'sub' }, sub),
     ),
   );
 }
