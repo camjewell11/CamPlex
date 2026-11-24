@@ -4,7 +4,7 @@
 // breaks the DASH stream, so the stream never moves.
 //
 // A player describes itself with a source:
-//   { video, total, title, subtitle, toggle(), seek(sec), skip() -> { label, run } | null,
+//   { video, total, title, subtitle, toggle(), seek(sec), seekBy(sec), skip() -> { label, run } | null,
 //     onReturn(), onClose() }
 // onReturn runs for the return button; onClose runs for the close button or when the user closes
 // the window. Swapping players (the next episode) without closing the window: hold(), release the
@@ -130,8 +130,8 @@ function build() {
   const top = h('div', { class: 'pip-top' }, h('div', { class: 'pip-title' }, name, sub), back, shut);
 
   const play = btn('pause', 'Play or pause (Space)', () => src?.toggle(), 'pbtn big');
-  const rew = btn('back10', 'Back 10 seconds', () => src && src.seek(src.video.currentTime - 10));
-  const fwd = btn('fwd10', 'Forward 10 seconds', () => src && src.seek(src.video.currentTime + 10));
+  const rew = btn('back10', 'Back 10 seconds', () => src && src.seekBy(-10));
+  const fwd = btn('fwd10', 'Forward 10 seconds', () => src && src.seekBy(10));
   const mute = btn('volume', 'Mute (M)', () => src && (src.video.muted = !src.video.muted));
   const vol = h('input', { class: 'pip-vol', type: 'range', min: 0, max: 1, step: 0.02, 'aria-label': 'Volume' });
   vol.oninput = () => {
@@ -221,8 +221,8 @@ function build() {
     const act = {
       ' ': () => src.toggle(),
       k: () => src.toggle(),
-      arrowleft: () => src.seek(v.currentTime - 10),
-      arrowright: () => src.seek(v.currentTime + 10),
+      arrowleft: () => src.seekBy(-10),
+      arrowright: () => src.seekBy(10),
       arrowup: () => (v.volume = Math.min(1, v.volume + 0.05)),
       arrowdown: () => (v.volume = Math.max(0, v.volume - 0.05)),
       m: () => (v.muted = !v.muted),

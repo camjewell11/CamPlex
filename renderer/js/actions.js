@@ -26,8 +26,28 @@ export async function playTarget(item) {
 export async function play(item, { fromStart = false } = {}) {
   const target = await playTarget(item);
   if (!target) return;
-  const resume = !fromStart && target.viewOffset ? '?resume=1' : '';
-  location.hash = `#/play/${target.ratingKey}${resume}`;
+  const q = [!fromStart && target.viewOffset ? 'resume=1' : '', target === item && item.mediaIndex ? `mediaIndex=${item.mediaIndex}` : ''].filter(Boolean).join('&');
+  location.hash = `#/play/${target.ratingKey}${q ? `?${q}` : ''}`;
+}
+
+// Starts a play queue and opens its first item. The player follows the queue through the pq
+// (queue ID) and pqi (queue item ID) route parameters.
+export async function startQueue({ key, playlistID, shuffle = false }, { replace = false } = {}) {
+  const pq = await state.plex.createPlayQueue({ key, playlistID, shuffle });
+  const list = pq.Metadata || [];
+  const first = list.find((m) => m.playQueueItemID === pq.playQueueSelectedItemID) || list[0];
+  if (!first) throw new Error('Plex returned an empty play queue.');
+  const href = `#/play/${first.ratingKey}?pq=${pq.playQueueID}&pqi=${first.playQueueItemID}`;
+  if (replace) location.replace(href);
+  else location.hash = href;
+}
+
+// The items before and after one item in a play queue.
+export async function queueNeighbors(pq, pqi) {
+  const list = (await state.plex.queueWindow(pq, pqi, 1)).Metadata || [];
+  const i = list.findIndex((m) => String(m.playQueueItemID) === String(pqi));
+  if (i < 0) return { prev: null, next: null };
+  return { prev: list[i - 1] || null, next: list[i + 1] || null };
 }
 
 // Next episode in watch order, crossing into the next season when needed.

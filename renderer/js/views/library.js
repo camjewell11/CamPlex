@@ -27,11 +27,15 @@ export const SORTS = {
   ],
 };
 
+import { renderAudioLibrary } from './music.js';
+
 const PAGE = 72;
 
 export async function renderLibrary(main, { id, params }) {
   const { plex, sections } = state;
   const sec = sections.find((s) => s.key === id);
+  const audioSec = !sec && state.audioSections.find((s) => s.key === id);
+  if (audioSec) return renderAudioLibrary(main, audioSec, params);
   if (!sec) throw new Error('This library no longer exists on the server.');
   setAmbient(null);
 
@@ -40,6 +44,14 @@ export async function renderLibrary(main, { id, params }) {
     unwatched: params.get('unwatched') === '1',
     genre: params.get('genre') || '',
   };
+  // Collections view (view=collections): the library's collections instead of its titles.
+  const collections = params.get('view') === 'collections';
+  const tabs = h(
+    'div',
+    { class: 'season-tabs library-tabs', role: 'tablist', 'aria-label': 'View' },
+    h('a', { role: 'tab', href: `#/library/${sec.key}`, 'aria-selected': String(!collections) }, 'Titles'),
+    h('a', { role: 'tab', href: `#/library/${sec.key}?view=collections`, 'aria-selected': String(collections) }, 'Collections'),
+  );
 
   const sortSel = h('select', { 'aria-label': 'Sort by' }, SORTS[sec.type].map(([v, label]) => h('option', { value: v, selected: v === opts.sort }, label)));
   const unwatched = h('input', { type: 'checkbox', checked: opts.unwatched });
@@ -55,8 +67,10 @@ export async function renderLibrary(main, { id, params }) {
       h(
         'header',
         { class: 'page-head' },
-        h('div', {}, h('h1', {}, sec.title), count),
-        h(
+        h('div', {}, h('h1', {}, sec.title), count, tabs),
+        collections
+          ? null
+          : h(
           'div',
           { class: 'filters glass' },
           h('label', {}, h('span', {}, 'Sort'), sortSel),
@@ -89,14 +103,14 @@ export async function renderLibrary(main, { id, params }) {
     if (opts.unwatched) query.unwatched = 1;
     if (opts.genre) query.genre = opts.genre;
     try {
-      const { items, total: t } = await plex.list(sec.key, query, loaded, PAGE);
+      const { items, total: t } = collections ? await plex.collections(sec.key, loaded, PAGE) : await plex.list(sec.key, query, loaded, PAGE);
       if (gen !== generation) return;
       total = t;
       loaded += items.length;
       if (!items.length) total = loaded;
       grid.append(...items.map(posterCard));
-      count.textContent = `${total} ${sec.type === 'show' ? 'shows' : 'movies'}`;
-      if (!total) grid.replaceChildren(h('p', { class: 'muted' }, 'No titles match these filters.'));
+      count.textContent = collections ? `${total} collection${total === 1 ? '' : 's'}` : `${total} ${sec.type === 'show' ? 'shows' : 'movies'}`;
+      if (!total) grid.replaceChildren(h('p', { class: 'muted' }, collections ? 'This library has no collections.' : 'No titles match these filters.'));
     } catch (e) {
       grid.append(h('p', { class: 'muted' }, `More titles could not load: ${e.message}`));
       total = loaded;

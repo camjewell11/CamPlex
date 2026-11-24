@@ -2,6 +2,7 @@
 import { h, svg, episodeCode, debounce } from './util.js';
 import { state } from './app.js';
 import { setAmbient, ambientOf } from './ambient.js';
+import { showMenu, watchedItem, continueItem, playlistItem } from './menu.js';
 
 const hoverAmbient = debounce((item) => {
   if (state.prefs?.ambientOnHover) setAmbient(ambientOf(item));
@@ -19,6 +20,7 @@ function progressBar(item) {
 }
 
 function badge(item) {
+  if (item.discover) return null;
   if (item.type === 'show' || item.type === 'season') {
     const left = (item.leafCount || 0) - (item.viewedLeafCount || 0);
     if (left > 0) return h('span', { class: 'badge count', title: `${left} unwatched episodes` }, String(left));
@@ -29,13 +31,68 @@ function badge(item) {
   return null;
 }
 
+// ---------- card menu ----------
+// Every card has a More button (top right of the picture) and a right-click menu. After a change,
+// the card redraws from fresh metadata, or leaves the row when it no longer belongs there.
+function cardMenu(card, item, rebuild, { inContinue = false } = {}) {
+  if (item.discover) return null;
+  if (!['movie', 'episode', 'show', 'season'].includes(item.type)) return null;
+  const name = item.type === 'episode' ? `${item.grandparentTitle} ${episodeCode(item)}` : item.title;
+  const onChange = async (kind) => {
+    if (kind === 'removed' || (inContinue && kind === 'watched')) return card.remove();
+    try {
+      const fresh = await state.plex.metadata(item.ratingKey);
+      if (fresh && card.isConnected) card.replaceWith(rebuild(fresh));
+    } catch (e) {
+      console.error(e);
+    }
+  };
+  const items = () => [
+    item.type === 'episode' ? { label: `Go to ${item.grandparentTitle}`, icon: 'arrowRight', run: () => (location.hash = pageHref(item)) } : null,
+    item.type === 'episode' ? { label: 'Episode details', icon: 'info', run: () => (location.hash = `#/item/${item.ratingKey}`) } : null,
+    item.type === 'show' || item.type === 'season' ? { label: 'Shuffle', icon: 'shuffle', run: () => (location.hash = `#/play/${item.ratingKey}?shuffle=1`) } : null,
+    item.type === 'episode' || item.type === 'show' || item.type === 'season' ? '-' : null,
+    watchedItem(item, onChange),
+    inContinue || item.viewOffset ? continueItem(item, onChange) : null,
+    playlistItem(item),
+  ];
+  const open = (at) => showMenu(at, items(), { label: `Actions for ${name}` });
+  card.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    open(e);
+  });
+  const btn = h(
+    'button',
+    {
+      class: 'card-more glass',
+      'aria-label': `More actions for ${name}`,
+      title: 'More',
+      onclick: (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        open(btn);
+      },
+    },
+    svg('more', 18),
+  );
+  return btn;
+}
+
 export function posterCard(item) {
+  const card = posterCardBody(item);
+  const more = cardMenu(card, item, posterCard);
+  if (more) card.querySelector('.art').append(more);
+  return card;
+}
+
+function posterCardBody(item) {
   const { plex } = state;
-  const thumb = item.type === 'episode' ? item.grandparentThumb || item.parentThumb : item.thumb;
-  const target = item.type === 'episode' ? item.ratingKey : item.ratingKey;
+  const thumb = item.type === 'episode' ? item.grandparentThumb || item.parentThumb : item.type === 'playlist' ? item.thumb || item.composite : item.thumb;
+  // Collections and playlists have their own pages.
+  const href = item.discover ? `#/discover/${item.ratingKey}` : item.type === 'collection' ? `#/collection/${item.ratingKey}` : item.type === 'playlist' ? `#/playlist/${item.ratingKey}` : `#/item/${item.ratingKey}`;
   return h(
     'a',
-    { class: 'card poster', href: `#/item/${target}`, ...focusHandlers(item) },
+    { class: 'card poster', href, ...focusHandlers(item) },
     h(
       'div',
       { class: 'art' },
@@ -50,6 +107,8 @@ export function posterCard(item) {
 function subline(item) {
   if (item.type === 'episode') return `${episodeCode(item)} ${item.title}`;
   if (item.type === 'season') return item.leafCount ? `${item.leafCount} episodes` : '';
+  if (item.type === 'collection') return item.childCount != null ? `${item.childCount} title${item.childCount === 1 ? '' : 's'}` : '';
+  if (item.type === 'playlist') return `${item.leafCount || 0} item${item.leafCount === 1 ? '' : 's'}${item.smart ? ', smart' : ''}`;
   if (item.type === 'show') return item.childCount ? `${item.year || ''}${item.year ? ', ' : ''}${item.childCount} season${item.childCount === 1 ? '' : 's'}` : String(item.year || '');
   return String(item.year || '');
 }
@@ -68,7 +127,15 @@ export function pageHref(item, { episode = false } = {}) {
 // 16:9 card for continue watching, episodes, and extras. For movies and episodes, the picture
 // opens the page (the show at the episode's season, or the movie), the play button in its middle
 // starts playback, the name opens the show or movie, and the episode line opens the episode.
-export function landscapeCard(item, { playable = true, label } = {}) {
+export function landscapeCard(item, opts = {}) {
+  const card = landscapeCardBody(item, opts);
+  if (opts.playable === false && item.type !== 'episode' && item.type !== 'movie') return card;
+  const more = cardMenu(card, item, (fresh) => landscapeCard(fresh, opts), opts);
+  if (more) (card.querySelector('.art-hold') || card.querySelector('.art')).append(more);
+  return card;
+}
+
+function landscapeCardBody(item, { playable = true, label } = {}) {
   const { plex } = state;
   const img = item.type === 'episode' || item.type === 'clip' ? item.thumb : item.art || item.thumb;
   const title = item.type === 'episode' ? item.grandparentTitle : item.title;

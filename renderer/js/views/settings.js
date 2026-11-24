@@ -3,8 +3,11 @@ import { h, svg } from '../util.js';
 import { state, savePrefs, defaultPrefs, DEFAULT_FEATURED } from '../app.js';
 import { QUALITY } from '../plex.js';
 import { setAmbient } from '../ambient.js';
+import { dialog, toast } from '../menu.js';
+import { SUB_SIZES, SUB_COLORS, SUB_BACKS, DEFAULT_SUB_STYLE, applySubtitleStyle } from '../substyle.js';
 import { SORTS } from './library.js';
 import { WATCHING_DAYS, featuredCandidates } from './home.js';
+import { updatesPanel } from '../updates.js';
 
 export async function renderSettings(main) {
   const { prefs, server, sections, plex } = state;
@@ -22,6 +25,13 @@ export async function renderSettings(main) {
   const quality = h('select', { 'aria-label': 'Default quality' }, Object.entries(QUALITY).map(([k, q]) => h('option', { value: k, selected: prefs.quality === k }, q.label)));
   quality.addEventListener('change', () => {
     prefs.quality = quality.value;
+    savePrefs();
+  });
+
+  // "Are you still watching?" after this many episodes start on their own in a row. 0 turns it off.
+  const still = h('select', { 'aria-label': 'Ask if you are still watching' }, [0, 2, 3, 4, 5, 8].map((n) => h('option', { value: n, selected: (prefs.stillWatching ?? 3) === n }, n ? `After ${n} episodes` : 'Never')));
+  still.addEventListener('change', () => {
+    prefs.stillWatching = Number(still.value);
     savePrefs();
   });
 
@@ -91,6 +101,7 @@ export async function renderSettings(main) {
           h('dl', { class: 'specs' }, h('dt', {}, 'Name'), h('dd', {}, server.name), h('dt', {}, 'Address'), h('dd', {}, server.uri)),
           h('div', { class: 'actions' }, signOut),
         ),
+        homePanel(),
         h(
           'section',
           { class: 'panel glass' },
@@ -102,15 +113,24 @@ export async function renderSettings(main) {
             quality,
           ),
           toggle('autoplayNext', 'Play the next episode', 'Counts down at the credits, then starts the next episode.'),
+          h(
+            'label',
+            { class: 'setting select' },
+            h('span', {}, h('strong', {}, 'Ask if you are still watching'), h('small', {}, 'Stops autoplay after this many episodes in a row with no key press, click, or scroll.')),
+            still,
+          ),
           toggle('fullscreenPlayer', 'Play in full screen', 'The player opens in full screen and leaves it when you stop or go back. Esc or F leaves it at any time.'),
           toggle('themeMusic', 'Theme music', 'Plays a show or movie theme quietly on its page.'),
+          castToggle(),
         ),
+        subtitlePanel(),
         h(
           'section',
           { class: 'panel glass' },
           h('h2', {}, 'Look'),
           toggle('ambientOnHover', 'Light follows the pointer', 'The window background takes the colors of the title you point at.'),
         ),
+        updatesPanel(),
       ),
       featuredPanel(),
       h(
@@ -124,6 +144,104 @@ export async function renderSettings(main) {
         addRowForm(() => drawRows()),
       ),
     ),
+  );
+}
+
+// Plex Companion: other Plex apps on this network can find this player and control it. Windows
+// might ask whether Marquee can use the network the first time this turns on.
+function castToggle() {
+  const { prefs } = state;
+  const input = h('input', { type: 'checkbox', checked: !!prefs.companion });
+  const note = h('small', {}, 'Other Plex apps on this network can find Marquee, start titles on it, and control playback.');
+  input.addEventListener('change', async () => {
+    input.disabled = true;
+    const r = await window.marquee.companion.enable(input.checked).catch((e) => ({ on: false, error: e.message }));
+    input.disabled = false;
+    if (r.error) toast(`Casting did not start: ${r.error}`, { error: true });
+    input.checked = !!r.on;
+    prefs.companion = !!r.on;
+    savePrefs();
+  });
+  return h('label', { class: 'setting' }, input, h('span', {}, h('strong', {}, 'Allow casting to Marquee'), note));
+}
+
+// Subtitle look: size, color, and background, with a preview. Applies to subtitles the app draws;
+// Plex draws burned-in subtitles in its own style.
+// Plex Home: the users on this Plex account. Switching changes whose watch history, ratings,
+// watchlist, and library access the app uses. A protected user needs their PIN.
+function homePanel() {
+  const list = h('ul', { class: 'home-users' }, h('li', { class: 'muted' }, 'Loading'));
+  const panel = h('section', { class: 'panel glass' }, h('h2', {}, 'Plex Home'), list);
+  window.marquee.home
+    .users()
+    .then(({ users, current }) => {
+      if (users.length < 2) return panel.remove();
+      list.replaceChildren(
+        ...users.map((u) => {
+          const me = u.uuid === current;
+          return h(
+            'li',
+            { class: me ? 'current' : '' },
+            u.thumb ? h('img', { src: u.thumb, alt: '', class: 'avatar' }) : h('span', { class: 'avatar' }),
+            h('span', { class: 'who' }, h('strong', {}, u.title), h('small', {}, [u.admin ? 'Administrator' : u.restricted ? 'Managed user' : 'Home user', u.protected ? 'PIN' : null].filter(Boolean).join(', '))),
+            me ? h('span', { class: 'muted small' }, 'Signed in') : h('button', { class: 'button glass', onclick: () => switchUser(u) }, 'Switch'),
+          );
+        }),
+      );
+    })
+    .catch((e) => list.replaceChildren(h('li', { class: 'muted' }, `Plex Home users could not load: ${e.message}`)));
+  return panel;
+}
+
+async function switchUser(u) {
+  const go = async (pin) => {
+    try {
+      await window.marquee.home.switchTo(u.uuid, pin);
+      location.hash = '#/home';
+      location.reload();
+      return true;
+    } catch (e) {
+      toast(String(e.message).replace(/^Error invoking remote method '[^']+': (Error: )?/, ''), { error: true });
+      return false;
+    }
+  };
+  if (!u.protected) return go();
+  const pin = h('input', { type: 'password', inputmode: 'numeric', maxlength: 4, autocomplete: 'off', 'aria-label': 'PIN', class: 'pin-input' });
+  dialog(`Switch to ${u.title}`, [h('p', {}, `Enter the PIN for ${u.title}.`), pin], [{ label: 'Cancel' }, { label: 'Switch', primary: true, run: async () => (await go(pin.value)) || false }]);
+  setTimeout(() => pin.focus());
+}
+
+function subtitlePanel() {
+  const { prefs } = state;
+  prefs.subtitleStyle = { ...DEFAULT_SUB_STYLE, ...(prefs.subtitleStyle || {}) };
+  const st = prefs.subtitleStyle;
+  const sample = h('span', { class: 'sub-sample' }, 'The quick brown fox jumps over the lazy dog.');
+  const paint = () => {
+    sample.style.fontSize = `${18 * SUB_SIZES[st.size][1]}px`;
+    sample.style.color = SUB_COLORS[st.color][1];
+    sample.style.background = SUB_BACKS[st.background][1];
+    sample.style.textShadow = SUB_BACKS[st.background][2];
+  };
+  const pick = (key, label, table) => {
+    const sel = h('select', { 'aria-label': label }, Object.entries(table).map(([k, v]) => h('option', { value: k, selected: st[key] === k }, v[0])));
+    sel.addEventListener('change', () => {
+      st[key] = sel.value;
+      applySubtitleStyle(st);
+      paint();
+      savePrefs();
+    });
+    return h('label', { class: 'setting select' }, h('span', {}, h('strong', {}, label)), sel);
+  };
+  paint();
+  return h(
+    'section',
+    { class: 'panel glass' },
+    h('h2', {}, 'Subtitles'),
+    pick('size', 'Size', SUB_SIZES),
+    pick('color', 'Color', SUB_COLORS),
+    pick('background', 'Background', SUB_BACKS),
+    h('div', { class: 'sub-preview' }, sample),
+    h('p', { class: 'muted' }, 'Applies to text subtitles that Marquee shows. Plex draws image subtitles into the video in its own style.'),
   );
 }
 

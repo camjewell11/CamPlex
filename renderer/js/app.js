@@ -9,9 +9,16 @@ import { renderDetail } from './views/detail.js';
 import { renderPlayer } from './views/player.js';
 import { renderSettings } from './views/settings.js';
 import { renderSearch } from './views/search.js';
+import { renderPlaylists, collectionView } from './views/collection.js';
+import { renderWatchlist, renderDiscover } from './views/watchlist.js';
 import * as pip from './pip.js';
+import { initCompanion } from './remote.js';
+import { renderAlbum, renderArtist } from './views/music.js';
+import { renderLiveGuide, renderLivePlayer } from './views/live.js';
+import { initUpdates } from './updates.js';
+import { applySubtitleStyle } from './substyle.js';
 
-export const state = { plex: null, sections: [], prefs: null, server: null };
+export const state = { plex: null, sections: [], audioSections: [], dvr: null, prefs: null, server: null };
 
 export async function savePrefs() {
   await window.marquee.settings.set(state.prefs);
@@ -70,7 +77,7 @@ export function defaultPrefs(sections, hubs) {
     rows.push({ id: 'custom-toprated', type: 'filter', title: 'Highly rated, not yet watched', section: movies.key, sort: 'audienceRating:desc', unwatched: true, visible: true });
     rows.push({ id: 'custom-random', type: 'filter', title: 'Something different tonight', section: movies.key, sort: 'random', unwatched: true, visible: true });
   }
-  return { themeMusic: true, autoplayNext: true, fullscreenPlayer: false, ambientOnHover: true, quality: 'original', featured: structuredClone(DEFAULT_FEATURED), rows };
+  return { themeMusic: true, autoplayNext: true, fullscreenPlayer: false, stillWatching: 3, ambientOnHover: true, quality: 'original', featured: structuredClone(DEFAULT_FEATURED), rows };
 }
 
 const ROUTES = [
@@ -80,6 +87,15 @@ const ROUTES = [
   [/^#\/play\/(\w+)$/, () => renderPlayer],
   [/^#\/settings$/, () => renderSettings],
   [/^#\/search$/, () => renderSearch],
+  [/^#\/playlists$/, () => renderPlaylists],
+  [/^#\/watchlist$/, () => renderWatchlist],
+  [/^#\/discover\/(\w+)$/, () => renderDiscover],
+  [/^#\/playlist\/(\w+)$/, () => collectionView('playlist')],
+  [/^#\/collection\/(\w+)$/, () => collectionView('collection')],
+  [/^#\/album\/(\w+)$/, () => renderAlbum],
+  [/^#\/artist\/(\w+)$/, () => renderArtist],
+  [/^#\/live$/, () => renderLiveGuide],
+  [/^#\/live\/([\w.]+)$/, () => renderLivePlayer],
 ];
 
 let cleanup = null;
@@ -118,11 +134,11 @@ export function endBackground() {
 }
 
 // Plays the next episode in the PiP window or the mini player while the user stays on another page.
-export async function playInBackground(id, mode = 'pip') {
+export async function playInBackground(id, mode = 'pip', extra = '') {
   pip.hold();
   endBackground();
   try {
-    const c = await renderPlayer(host(), { id, params: new URLSearchParams(`${mode}=1&bg=1`) });
+    const c = await renderPlayer(host(), { id, params: new URLSearchParams(`${mode}=1&bg=1${extra ? `&${extra}` : ''}`) });
     if (!c.keepAlive()) {
       runCleanup(c);
       c.root.remove();
@@ -157,7 +173,7 @@ async function route() {
     location.hash = '#/home';
     return;
   }
-  document.body.classList.toggle('playing', isPlayer);
+  document.body.classList.toggle('playing', isPlayer || hashPath.startsWith('#/live/'));
   updateNav(hashPath);
   if (isPlayer && parked) {
     if (parked.ratingKey === id) {
@@ -195,7 +211,7 @@ export function errorPanel(e) {
 }
 
 function buildNav() {
-  const links = state.sections.map((s) => h('a', { href: `#/library/${s.key}`, 'data-route': `#/library/${s.key}` }, s.title));
+  const links = [...state.sections, ...state.audioSections].map((s) => h('a', { href: `#/library/${s.key}`, 'data-route': `#/library/${s.key}` }, s.title));
   const input = h('input', { type: 'search', placeholder: 'Search movies and shows', 'aria-label': 'Search' });
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && input.value.trim()) location.hash = `#/search?q=${encodeURIComponent(input.value.trim())}`;
@@ -209,6 +225,9 @@ function buildNav() {
       h('a', { class: 'wordmark', href: '#/home' }, 'Marquee'),
       h('a', { href: '#/home', 'data-route': '#/home' }, 'Home'),
       links,
+      state.dvr ? h('a', { href: '#/live', 'data-route': '#/live' }, 'Live TV') : null,
+      h('a', { href: '#/playlists', 'data-route': '#/playlists' }, 'Playlists'),
+      h('a', { href: '#/watchlist', 'data-route': '#/watchlist' }, 'Watchlist'),
       h('label', { class: 'search' }, svg('search', 16), input),
       fullBtn,
       h('a', { class: 'iconlink', href: '#/settings', 'data-route': '#/settings', 'aria-label': 'Settings', title: 'Settings' }, svg('settings', 18)),
@@ -280,9 +299,12 @@ async function boot() {
     return;
   }
   state.server = status.server;
+  state.version = status.version;
   state.plex = new Plex({ uri: status.server.uri, token: status.token, clientId: status.clientId, version: status.version });
   try {
     state.sections = await state.plex.sections();
+    state.audioSections = await state.plex.audioSections().catch(() => []);
+    state.dvr = await state.plex.liveDvr().catch(() => null);
   } catch (e) {
     app.replaceChildren(h('main', { class: 'main' }, errorPanel(e)));
     return;
@@ -305,9 +327,12 @@ async function boot() {
       await savePrefs();
     }
   }
+  applySubtitleStyle(state.prefs.subtitleStyle);
   mainEl = h('main', { class: 'main', id: 'main' });
   app.replaceChildren(buildNav(), mainEl);
   setupFullscreen();
+  initCompanion();
+  initUpdates();
   window.addEventListener('hashchange', route);
   if (!location.hash) location.hash = '#/home';
   else route();

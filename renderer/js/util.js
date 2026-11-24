@@ -50,7 +50,18 @@ const ICONS = {
   close: '<path d="m6.4 5 5.6 5.6L17.6 5 19 6.4 13.4 12l5.6 5.6-1.4 1.4-5.6-5.6L6.4 19 5 17.6l5.6-5.6L5 6.4z" fill="currentColor"/>',
   up: '<path d="m12 7-6 6 1.4 1.4 4.6-4.6 4.6 4.6L18 13z" fill="currentColor"/>',
   down: '<path d="m12 17 6-6-1.4-1.4-4.6 4.6-4.6-4.6L6 11z" fill="currentColor"/>',
+  more: '<circle cx="5" cy="12" r="2" fill="currentColor"/><circle cx="12" cy="12" r="2" fill="currentColor"/><circle cx="19" cy="12" r="2" fill="currentColor"/>',
+  star: '<path d="m12 2.8 2.8 5.8 6.3.9-4.6 4.4 1.1 6.3L12 17.2l-5.6 3 1.1-6.3-4.6-4.4 6.3-.9z" fill="currentColor"/>',
+  playlist: '<path d="M3 6h12v2H3zm0 5h12v2H3zm0 5h8v2H3zm14-5v-.01L21 14l-4 3z" fill="currentColor"/>',
+  plus: '<path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6z" fill="currentColor"/>',
+  refresh: '<path d="M17.7 6.3A8 8 0 1 0 20 12h-2a6 6 0 1 1-1.8-4.2L13 11h7V4z" fill="currentColor"/>',
+  edit: '<path d="M4 17.2V20h2.8l8.3-8.3-2.8-2.8zm15.7-7.6a1 1 0 0 0 0-1.4L17.8 6.3a1 1 0 0 0-1.4 0l-1.5 1.5 2.8 2.8z" fill="currentColor"/>',
+  shuffle: '<path d="M14.5 4H20v5.5l-2-2-3.6 3.6-1.4-1.4L16.6 6zM4 5.4 5.4 4 20 18.6 18.6 20zM20 14.5V20h-5.5l2-2-2.5-2.5 1.4-1.4 2.5 2.5z" fill="currentColor"/>',
+  cast: '<path d="M2 17.5V20h2.5A2.5 2.5 0 0 0 2 17.5zm0-3.5v2a4 4 0 0 1 4 4h2a6 6 0 0 0-6-6zm0-3.5v2A7.5 7.5 0 0 1 9.5 20h2A9.5 9.5 0 0 0 2 10.5zM3 4h18v16h-7v-2h5V6H5v2H3z" fill="currentColor"/>',
+  bookmark: '<path d="M6 3h12v18l-6-4.5L6 21z" fill="currentColor"/>',
   trash: '<path d="M9 3h6l1 2h4v2H4V5h4zm-3 6h12l-1 12H7z" fill="currentColor"/>',
+  download: '<path d="M11 4h2v8.2l3.3-3.3 1.4 1.4L12 16l-5.7-5.7 1.4-1.4 3.3 3.3zM5 18h14v2H5z" fill="currentColor"/>',
+  folder: '<path d="M3 5h7l2 2h9v12H3zm2 4v8h14V9z" fill="currentColor"/>',
 };
 
 export function duration(ms) {

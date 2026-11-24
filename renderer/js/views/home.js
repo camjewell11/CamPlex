@@ -30,7 +30,7 @@ export async function renderHome(main) {
     try {
       const items = await resolveRow(r);
       if (!items.length) return slots[i].remove();
-      const cards = r.type === 'continue' ? items.map((it) => landscapeCard(it)) : items.map(posterCard);
+      const cards = r.type === 'continue' ? items.map((it) => landscapeCard(it, { inContinue: true })) : items.map(posterCard);
       slots[i].replaceWith(row(r.title, cards));
     } catch (e) {
       console.error(e);

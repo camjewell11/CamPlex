@@ -5,6 +5,19 @@ import { posterCard, landscapeCard, row, ratingsList } from '../components.js';
 import { setAmbient, ambientOf } from '../ambient.js';
 import { imageOf } from '../plex.js';
 import { play, onDeckOf } from '../actions.js';
+import { watchlistButton } from './watchlist.js';
+import { playOnButton } from '../remote.js';
+import { showMenu, watchedItem, continueItem, playlistItem, serverItems, starRating } from '../menu.js';
+import { downloadItems } from '../downloads.js';
+
+// Draws the page again after a change (the scroll position stays).
+function redraw(delay = 0) {
+  const y = window.scrollY;
+  setTimeout(() => {
+    window.dispatchEvent(new HashChangeEvent('hashchange'));
+    setTimeout(() => window.scrollTo(0, y), 400);
+  }, delay);
+}
 
 export async function renderDetail(main, { id, params }) {
   const { plex } = state;
@@ -90,21 +103,68 @@ function plate(item, show, audio) {
       item.viewOffset ? h('button', { class: 'button glass', onclick: () => play(item, { fromStart: true }) }, 'Play from start') : null,
       trailer ? h('a', { class: 'button glass', href: `#/play/${trailer}` }, 'Trailer') : null,
       watchBtn,
+      watchlistButton(item),
+      playOnButton(item),
       audio ? audio.button : null,
+      moreButton(item),
     ),
+    item.type === 'movie' || item.type === 'show' || item.type === 'episode' ? h('div', { class: 'your-rating' }, h('span', { class: 'muted' }, 'Your rating'), starRating(item)) : null,
     people.length ? h('div', { class: 'people' }, people) : null,
   );
 }
 
+// The More menu: shuffle, playlists, Continue watching, and the server tools.
+function moreButton(item) {
+  const btn = h('button', { class: 'button glass icon-only', 'aria-label': 'More actions', title: 'More' }, svg('more', 18));
+  btn.addEventListener('click', () =>
+    showMenu(
+      btn,
+      [
+        item.type === 'show' ? { label: 'Shuffle', icon: 'shuffle', run: () => (location.hash = `#/play/${item.ratingKey}?shuffle=1`) } : null,
+        playlistItem(item),
+        item.viewOffset ? continueItem(item, () => redraw()) : null,
+        '-',
+        ...(downloadItems(item).length ? [...downloadItems(item), '-'] : []),
+        ...serverItems(item, (kind) => redraw(kind === 'matched' ? 2500 : 300)),
+      ],
+      { label: 'More actions' },
+    ),
+  );
+  return btn;
+}
+
+// A title with more than one file gets a Version list. The chosen version (item.mediaIndex) is
+// what Play and Resume start.
 function fileInfo(item) {
-  const { plex } = state;
-  const media = item.Media[0];
+  const list = h('dl', { class: 'specs' });
+  const versions = item.Media.length > 1 ? versionPicker(item, () => fillSpecs(item, list)) : null;
+  fillSpecs(item, list);
+  const hist = h('div', { class: 'history' });
+  loadHistory(item, hist);
+  return h('aside', { class: 'fileinfo glass' }, h('h2', {}, 'About this file'), versions, list, hist);
+}
+
+function versionPicker(item, onchange) {
+  const label = (m) => {
+    const res = m.videoResolution ? (/^\d+$/.test(m.videoResolution) ? `${m.videoResolution}p` : m.videoResolution.toUpperCase()) : '';
+    return [res, (m.videoCodec || '').toUpperCase(), (m.container || '').toUpperCase(), bytes(m.Part?.[0]?.size)].filter(Boolean).join(', ');
+  };
+  const sel = h('select', { 'aria-label': 'Version' }, item.Media.map((m, i) => h('option', { value: i }, label(m))));
+  sel.addEventListener('change', () => {
+    item.mediaIndex = Number(sel.value);
+    onchange();
+  });
+  return h('label', { class: 'setting select version-pick' }, h('span', {}, h('strong', {}, `${item.Media.length} versions`)), sel);
+}
+
+function fillSpecs(item, list) {
+  list.replaceChildren();
+  const media = item.Media[item.mediaIndex || 0];
   const part = media.Part[0];
   const streams = part.Stream || [];
   const video = streams.find((s) => s.streamType === 1);
   const audios = streams.filter((s) => s.streamType === 2);
   const subs = streams.filter((s) => s.streamType === 3);
-  const list = h('dl', { class: 'specs' });
   const add = (k, v) => v && list.append(h('dt', {}, k), h('dd', {}, v));
   add('Video', video ? video.extendedDisplayTitle || video.displayTitle : `${media.videoResolution} ${media.videoCodec}`);
   add('Audio', audios.length ? h('span', {}, audios.slice(0, 3).map((a) => h('span', { class: 'line' }, a.extendedDisplayTitle || a.displayTitle)), audios.length > 3 ? h('span', { class: 'line muted' }, `${audios.length - 3} more`) : null) : null);
@@ -113,10 +173,6 @@ function fileInfo(item) {
   const playsAs = h('dd', { class: 'muted' }, 'Checking');
   list.append(h('dt', {}, 'Plays as'), playsAs);
   describeDecision(item).then((t) => (playsAs.textContent = t), () => (playsAs.textContent = 'Unknown'));
-
-  const hist = h('div', { class: 'history' });
-  loadHistory(item, hist);
-  return h('aside', { class: 'fileinfo glass' }, h('h2', {}, 'About this file'), list, hist);
 }
 
 function showInfo(item) {
@@ -133,7 +189,7 @@ async function describeDecision(item) {
   const { plex } = state;
   const session = uuid();
   try {
-    const d = await plex.decision(item.ratingKey, session, { quality: state.prefs.quality });
+    const d = await plex.decision(item.ratingKey, session, { quality: state.prefs.quality, mediaIndex: item.mediaIndex || 0 });
     const streams = d.Metadata?.[0]?.Media?.[0]?.Part?.[0]?.Stream || [];
     const v = streams.find((s) => s.streamType === 1);
     const a = streams.find((s) => s.streamType === 2);
@@ -171,12 +227,39 @@ async function seasonsBlock(show, wanted, focusKey) {
   let current = seasons.find((s) => s.index === wanted) || seasons.find((s) => s.index === deckSeason) || regular[0] || seasons[0];
   const tabs = h('div', { class: 'season-tabs', role: 'tablist' });
   const list = h('div', { class: 'episodes' });
+  // Marks the shown season watched or unwatched. Its label follows the season's state.
+  const seasonBtn = h('button', { class: 'button glass small season-watch' }, svg('check', 14), h('span', {}, ''));
+  const seasonLabel = () => {
+    const done = current && current.leafCount > 0 && current.viewedLeafCount === current.leafCount;
+    seasonBtn.lastChild.textContent = done ? 'Mark season unwatched' : 'Mark season watched';
+    seasonBtn.setAttribute('aria-pressed', String(!!done));
+  };
+  seasonBtn.addEventListener('click', async () => {
+    const done = current.leafCount > 0 && current.viewedLeafCount === current.leafCount;
+    seasonBtn.disabled = true;
+    try {
+      await plex.markWatched(current.ratingKey, !done);
+      const fresh = (await plex.children(show.ratingKey)).find((s) => s.ratingKey === current.ratingKey);
+      if (fresh) Object.assign(current, fresh);
+      await select(current);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      seasonBtn.disabled = false;
+    }
+  });
   async function select(season) {
     current = season;
     tabs.querySelectorAll('button').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.key === season.ratingKey)));
     list.replaceChildren(h('p', { class: 'muted' }, 'Loading episodes'));
+    seasonLabel();
     const eps = await plex.children(season.ratingKey);
-    list.replaceChildren(...eps.map(episodeRow));
+    const refresh = async () => {
+      const fresh = (await plex.children(show.ratingKey)).find((s) => s.ratingKey === season.ratingKey);
+      if (fresh) Object.assign(season, fresh);
+      if (current === season) select(season);
+    };
+    list.replaceChildren(...eps.map((ep) => episodeRow(ep, refresh)));
     history.replaceState(null, '', `#/item/${show.ratingKey}?season=${season.index}`);
     // A card's picture links here with the episode it shows; bring that episode into view.
     const focus = focusKey && list.querySelector(`[data-key="${CSS.escape(String(focusKey))}"]`);
@@ -190,11 +273,15 @@ async function seasonsBlock(show, wanted, focusKey) {
     tabs.append(h('button', { role: 'tab', 'data-key': s.ratingKey, onclick: () => select(s) }, s.index === 0 ? 'Specials' : `Season ${s.index}`));
   }
   if (current) select(current);
-  return h('section', { class: 'seasons' }, tabs, list);
+  return h('section', { class: 'seasons' }, h('div', { class: 'season-bar' }, tabs, seasonBtn), list);
 }
 
-function episodeRow(ep) {
+function episodeRow(ep, onChange) {
   const { plex } = state;
+  const menu = (at) =>
+    showMenu(at, [{ label: 'Episode details', icon: 'info', run: () => (location.hash = `#/item/${ep.ratingKey}`) }, '-', watchedItem(ep, onChange), ep.viewOffset ? continueItem(ep, onChange) : null, playlistItem(ep)], {
+      label: `Actions for episode ${ep.index}`,
+    });
   const pct = ep.viewOffset && ep.duration ? (ep.viewOffset / ep.duration) * 100 : 0;
   // The row plays the episode; its number and the info button open the episode's page.
   const openDetails = (e) => {
@@ -204,7 +291,15 @@ function episodeRow(ep) {
   };
   return h(
     'a',
-    { class: `episode ${ep.viewCount ? 'seen' : ''}`, href: `#/play/${ep.ratingKey}${ep.viewOffset ? '?resume=1' : ''}`, 'data-key': ep.ratingKey },
+    {
+      class: `episode ${ep.viewCount ? 'seen' : ''}`,
+      href: `#/play/${ep.ratingKey}${ep.viewOffset ? '?resume=1' : ''}`,
+      'data-key': ep.ratingKey,
+      oncontextmenu: (e) => {
+        e.preventDefault();
+        menu(e);
+      },
+    },
     h(
       'div',
       { class: 'thumb' },
