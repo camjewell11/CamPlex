@@ -14,7 +14,7 @@ export class Plex {
       'X-Plex-Version': this.version,
       'X-Plex-Client-Identifier': this.clientId,
       'X-Plex-Platform': 'Generic',
-      'X-Plex-Device': 'Windows',
+      'X-Plex-Device': window.marquee?.platform === 'darwin' ? 'macOS' : 'Windows',
       'X-Plex-Device-Name': 'Marquee',
       'X-Plex-Token': this.token,
     };

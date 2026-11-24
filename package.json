@@ -11,7 +11,8 @@
     "dev": "npm run vendor && electron . --dev",
     "icon": "electron scripts/make-icon.cjs",
     "dist": "npm run vendor && electron-builder --win nsis",
-    "dist:dir": "npm run vendor && electron-builder --win dir"
+    "dist:dir": "npm run vendor && electron-builder --win dir",
+    "dist:mac": "npm run vendor && electron-builder --mac dmg --universal"
   },
   "devDependencies": {
     "@fontsource-variable/bricolage-grotesque": "^5.3.0",
@@ -45,6 +46,17 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "build/icon.png",
+      "category": "public.app-category.entertainment",
+      "identity": "-",
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false
+    },
+    "dmg": {
+      "artifactName": "Marquee-${version}-universal.${ext}"
     }
   }
 }

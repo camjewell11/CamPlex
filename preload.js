@@ -1,6 +1,10 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+// macOS keeps its window buttons at the top left; styles.css clears room for them under html.mac.
+if (process.platform === 'darwin') window.addEventListener('DOMContentLoaded', () => document.documentElement.classList.add('mac'));
+
 contextBridge.exposeInMainWorld('marquee', {
+  platform: process.platform,
   auth: {
     status: () => ipcRenderer.invoke('auth:status'),
     start: () => ipcRenderer.invoke('auth:start'),

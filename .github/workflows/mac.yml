@@ -1,0 +1,47 @@
+# Builds the macOS disk image (universal: Apple silicon and Intel) on a GitHub macOS runner and
+# attaches it to a release. Runs when a release is published, or by hand for an existing release.
+name: macOS build
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to attach the disk image to (for example, v0.3.0)
+        required: true
+      ref:
+        description: Branch, tag, or commit to build (defaults to the release tag)
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  dmg:
+    runs-on: macos-latest
+    env:
+      TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.event.release.tag_name || inputs.tag }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Build the disk image
+        run: npm run dist:mac
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Check the app signature (ad hoc)
+        run: codesign --verify --deep --strict --verbose=2 "dist/mac-universal/Marquee.app"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: marquee-dmg
+          path: dist/*.dmg
+      - name: Attach to the release
+        run: gh release upload "$TAG" dist/*.dmg --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}

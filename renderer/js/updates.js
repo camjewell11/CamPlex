@@ -14,11 +14,10 @@ export function initUpdates() {
 
 function offer(r) {
   const notes = r.notes ? h('p', { class: 'update-notes' }, r.notes) : null;
-  dialog(
-    `Marquee ${r.latest} is available`,
-    [h('p', {}, `You have version ${r.current}. Installing closes Marquee, updates it, and opens it again.`), notes],
-    [{ label: 'Later' }, { label: 'Install and restart', primary: true, run: install }],
-  );
+  const text = r.manual
+    ? `You have version ${r.current}. Download opens the new disk image in your browser. Quit Marquee, open the disk image, and drag Marquee to Applications.`
+    : `You have version ${r.current}. Installing closes Marquee, updates it, and opens it again.`;
+  dialog(`Marquee ${r.latest} is available`, [h('p', {}, text), notes], [{ label: 'Later' }, { label: r.manual ? 'Download' : 'Install and restart', primary: true, run: install }]);
 }
 
 async function install() {

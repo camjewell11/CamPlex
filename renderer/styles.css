@@ -217,6 +217,9 @@ body.fullscreen .topnav {
   transition: transform 0.25s ease;
 }
 body.fullscreen.nav-reveal .topnav { transform: none; }
+/* macOS: the window buttons sit at the top left, so clear them there instead of at the right. */
+html.mac .topnav { padding-left: calc(var(--gutter) + 76px); padding-right: var(--gutter); }
+html.mac body.fullscreen .topnav { padding-left: var(--gutter); }
 
 .main { min-height: 100vh; padding-bottom: 80px; }
 
@@ -569,6 +572,8 @@ body.fullscreen.nav-reveal .topnav { transform: none; }
   -webkit-app-region: drag;
 }
 .p-top .ctl { -webkit-app-region: no-drag; width: 44px; height: 44px; }
+html.mac .p-top { padding-left: 100px; padding-right: 24px; }
+html.mac body.fullscreen .p-top { padding-left: 24px; }
 .p-title { display: grid; line-height: 1.25; }
 .p-title strong, .p-title .p-name { font-size: 19px; font-weight: 700; font-stretch: 85%; justify-self: start; }
 .p-title .p-name:hover { text-decoration: underline; text-underline-offset: 3px; }

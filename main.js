@@ -30,6 +30,9 @@ const secretFile = () => path.join(dataDir(), 'credentials.bin');
 
 // Window buttons drawn over the app's own top bar (see the full-screen handlers in createWindow).
 const TITLE_BAR = { color: '#00000000', symbolColor: '#f2f4f8', height: 44 };
+// macOS draws its own window buttons (the traffic lights) at the top left; the renderer clears
+// space for them (html.mac in styles.css) and there's no overlay to manage.
+const MAC = process.platform === 'darwin';
 
 function readSettings() {
   try {
@@ -80,8 +83,8 @@ function plexHeaders(token) {
     'X-Plex-Product': 'Marquee',
     'X-Plex-Version': VERSION,
     'X-Plex-Client-Identifier': clientId(),
-    'X-Plex-Platform': 'Windows',
-    'X-Plex-Device': 'Windows',
+    'X-Plex-Platform': MAC ? 'macOS' : 'Windows',
+    'X-Plex-Device': MAC ? 'macOS' : 'Windows',
     'X-Plex-Device-Name': `Marquee (${os.hostname()})`,
   };
   if (token) h['X-Plex-Token'] = token;
@@ -223,7 +226,7 @@ function createWindow() {
     title: 'Marquee',
     icon: path.join(ROOT, 'build', 'icon.png'),
     titleBarStyle: 'hidden',
-    titleBarOverlay: TITLE_BAR,
+    ...(MAC ? { trafficLightPosition: { x: 18, y: 26 } } : { titleBarOverlay: TITLE_BAR }),
     webPreferences: { preload: path.join(ROOT, 'preload.js'), contextIsolation: true, sandbox: true, backgroundThrottling: !SHOT },
   });
   win.setMenuBarVisibility(false);
@@ -248,11 +251,11 @@ function createWindow() {
   // Windows keeps the minimize, maximize, and close buttons over a full-screen window. Shrink the
   // overlay to nothing (Electron keeps 1 px) with clear symbols while in full screen, and restore it after.
   win.on('enter-full-screen', () => {
-    win.setTitleBarOverlay({ color: '#00000000', symbolColor: '#00000000', height: 0 });
+    if (!MAC) win.setTitleBarOverlay({ color: '#00000000', symbolColor: '#00000000', height: 0 });
     win.webContents.send('fullscreen', true);
   });
   win.on('leave-full-screen', () => {
-    win.setTitleBarOverlay(TITLE_BAR);
+    if (!MAC) win.setTitleBarOverlay(TITLE_BAR);
     win.webContents.send('fullscreen', false);
   });
   // F11 puts the whole app in full screen from any page, even while a text box has focus.
@@ -505,7 +508,9 @@ app.whenReady().then(() => {
 // Reads the latest GitHub release of camjewell11/CamPlex. When its tag (v0.3.1) is newer than this
 // build and it has the NSIS installer as an asset, the renderer offers to install it. Install
 // downloads the installer to the temp folder, checks its size and SHA-256 digest, runs it silently
-// (/S keeps the install folder; --force-run starts Marquee again), and quits.
+// (/S keeps the install folder; --force-run starts Marquee again), and quits. On macOS the release's
+// .dmg is the asset, and Install opens its download in the browser (an unsigned app can't replace
+// itself), so the user drags the new copy to Applications.
 const RELEASES_API = 'https://api.github.com/repos/camjewell11/CamPlex/releases/latest';
 const UPDATE_CHECK_DELAY = 15 * 1000;
 let updateInfo = null;
@@ -534,12 +539,13 @@ async function checkForUpdate() {
   const j = await r.json();
   const latest = String(j.tag_name || '').replace(/^v/i, '');
   // GitHub replaces the spaces in "Marquee Setup 0.3.0.exe" with dots.
-  const asset = (j.assets || []).find((a) => /^Marquee[ .-]Setup[ .-][\d.]+\.exe$/i.test(a.name));
+  const pattern = MAC ? /^Marquee-[\d.]+(-universal)?\.dmg$/i : /^Marquee[ .-]Setup[ .-][\d.]+\.exe$/i;
+  const asset = (j.assets || []).find((a) => pattern.test(a.name));
   const available = !!asset && isNewer(latest, VERSION);
   updateInfo = available
     ? { version: latest, url: asset.browser_download_url, size: asset.size, digest: /^sha256:([0-9a-f]{64})$/i.exec(asset.digest || '')?.[1] || null }
     : null;
-  return { current: VERSION, latest, available, notes: String(j.body || '').slice(0, 2000), page: j.html_url };
+  return { current: VERSION, latest, available, manual: MAC, notes: String(j.body || '').slice(0, 2000), page: j.html_url };
 }
 function sendUpdate(channel, v) {
   if (win && !win.isDestroyed()) win.webContents.send(channel, v);
@@ -548,6 +554,10 @@ async function installUpdate() {
   if (!app.isPackaged) throw new Error('Updates install only in the installed app.');
   if (!updateInfo) throw new Error('There is no update to install.');
   if (updateBusy) return;
+  if (MAC) {
+    await shell.openExternal(updateInfo.url);
+    return;
+  }
   updateBusy = true;
   const { version, url, size, digest } = updateInfo;
   const file = path.join(app.getPath('temp'), `Marquee-Setup-${version}.exe`);

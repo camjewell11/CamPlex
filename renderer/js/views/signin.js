@@ -36,7 +36,7 @@ export function renderSignIn(el, onDone) {
         { class: 'signin-card glass' },
         h('span', { class: 'wordmark large' }, 'Marquee'),
         h('h1', {}, 'Your Plex library, in a new light'),
-        h('p', {}, 'Sign in with the Plex account that owns or shares your server. Marquee stores the sign-in on this computer, encrypted with your Windows account.'),
+        h('p', {}, `Sign in with the Plex account that owns or shares your server. Marquee stores the sign-in on this computer, encrypted with your ${window.marquee.platform === 'darwin' ? 'macOS keychain' : 'Windows account'}.`),
         h('div', { class: 'actions' }, start, cancel),
         status,
       ),

@@ -3,6 +3,7 @@
 // answers discovery searches, and HELLO messages on 32413 announce the player.
 const http = require('http');
 const dgram = require('dgram');
+const PLATFORM = process.platform === 'darwin' ? 'macOS' : 'Windows';
 
 const GDM_GROUP = '239.0.0.250';
 const GDM_SEARCH_PORT = 32412;
@@ -207,7 +208,7 @@ class Companion {
       'X-Plex-Product': 'Marquee',
       'X-Plex-Version': this.version,
       'X-Plex-Device-Name': this.name,
-      'X-Plex-Platform': 'Windows',
+      'X-Plex-Platform': PLATFORM,
       'X-Plex-Provides': 'player',
     };
   }
@@ -246,7 +247,7 @@ class Companion {
         machineIdentifier: this.clientId,
         product: 'Marquee',
         version: this.version,
-        platform: 'Windows',
+        platform: PLATFORM,
         platformVersion: process.getSystemVersion?.() || '',
         protocolVersion: 1,
         protocolCapabilities: CAPABILITIES,
